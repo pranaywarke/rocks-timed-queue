@@ -185,7 +185,8 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         synchronized (dequeueLock) {
             // On clean shutdown, persist cached entries back into RocksDB using their original keys
             if (!readyCache.isEmpty()) {
-                try (WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL());
+                // Force durability for restore: always WAL-enabled and fsync to ensure items survive power loss
+                try (WriteOptions wo = new WriteOptions().setSync(true).setDisableWAL(false);
                      WriteBatch wb = new WriteBatch()) {
                     for (CacheEntry<T> e : readyCache) {
                         wb.put(e.key, e.value);
