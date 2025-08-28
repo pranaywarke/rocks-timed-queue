@@ -12,9 +12,6 @@ public interface TimeQueue<T> extends AutoCloseable {
     // Non-blocking dequeue of first ready item (executeAtMillis <= now)
     T dequeue();
 
-    // Blocking dequeue; waits until an item is ready
-    T dequeueBlocking() throws InterruptedException;
-
     // Peek at next ready item without removing; non-blocking
     T peek();
 

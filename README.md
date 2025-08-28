@@ -10,7 +10,7 @@ A minimal, high-performance, time-based FIFO queue built on RocksDB.
 ## Features
 
 - Enqueue for a timestamp or after a delay
-- Non-blocking and blocking dequeue
+- Non-blocking dequeue (returns null when no ready item)
 - Peek next ready item
 - Approximate size introspection
 
@@ -52,15 +52,15 @@ try (QueueClient client = new QueueClient(config)) {
     TimeQueue<String> q = client.getQueue("my-group", String.class, new JsonSerializer<>());
 
     q.enqueue("hello", System.currentTimeMillis());
-    String v = q.dequeue();
+    String v = q.dequeue(); // returns null if not ready
 }
 ```
 
 ## Threading
 
-- `QueueClient` manages read/write thread pools and a small maintenance scheduler.
-- Writes are executed asynchronously for throughput.
-- Blocking dequeue uses a simple polling backoff; more advanced waiting strategies can be added.
+- Per-group dequeue serialization: `QueueClient` provides a shared lock per group; all `dequeue()` calls for the same group are serialized within the JVM to avoid duplicate deliveries from intra-process races.
+- Producers are fully concurrent; only `dequeue()` per group is serialized.
+- Multi-process note: Java-level synchronization does not coordinate across processes or hosts. If you run multiple processes against the same group DB and require at-most-once without duplicates, you need a DB-level atomic claim (e.g., RocksDB transactions or a claim-marker pattern) and/or idempotent consumers.
 
 ## License
 

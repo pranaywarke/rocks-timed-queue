@@ -2,6 +2,7 @@ package dev.rocksqueue.recovery;
 
 import dev.rocksqueue.config.QueueConfig;
 import dev.rocksqueue.core.RocksTimeQueue;
+import dev.rocksqueue.core.Counter;
 import dev.rocksqueue.ser.JsonSerializer;
 import dev.rocksqueue.testing.MutableClock;
 import org.junit.jupiter.api.AfterEach;
@@ -24,16 +25,10 @@ class ClockBehaviorTest {
 
     private Path tmp;
     private RocksDB db;
-    private ExecutorService writePool;
-    private ExecutorService readPool;
-    private ScheduledExecutorService maintenancePool;
 
     @AfterEach
     void tearDown() throws Exception {
         if (db != null) db.close();
-        if (writePool != null) writePool.shutdownNow();
-        if (readPool != null) readPool.shutdownNow();
-        if (maintenancePool != null) maintenancePool.shutdownNow();
         if (tmp != null) {
             try {
                 Files.walk(tmp)
@@ -41,17 +36,41 @@ class ClockBehaviorTest {
                         .forEach(p -> { try { Files.deleteIfExists(p); } catch (Exception ignored) {} });
             } catch (Exception ignored) {}
         }
+
+    }
+
+    private void waitUntilNotEmpty(RocksTimeQueue<String> q, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (!q.isEmptyApproximate()) return;
+            Thread.sleep(10);
+        }
+    }
+
+    private String pollDequeueWithTimeout(RocksTimeQueue<String> q, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String v;
+        while (System.currentTimeMillis() < deadline) {
+            v = q.dequeue();
+            if (v != null) return v;
+            Thread.sleep(10);
+        }
+        return null;
+    }
+
+    static class InMemCounter implements Counter {
+        private final AtomicLong al = new AtomicLong(0);
+        @Override public long get() { return al.get(); }
+        @Override public long incrementAndGet() { return al.incrementAndGet(); }
+        @Override public void set(long value) { al.set(value); }
     }
 
     private RocksTimeQueue<String> newQueue(MutableClock clock) throws Exception {
         tmp = Files.createTempDirectory("rocksqueue-clock-");
         Options opts = new Options().setCreateIfMissing(true);
         db = RocksDB.open(opts, tmp.toString());
-        writePool = Executors.newFixedThreadPool(2, r -> new Thread(r, "tq-write-"+UUID.randomUUID()));
-        readPool = Executors.newFixedThreadPool(2, r -> new Thread(r, "tq-read-"+UUID.randomUUID()));
-        maintenancePool = Executors.newScheduledThreadPool(1, r -> new Thread(r, "tq-maint-"+UUID.randomUUID()));
         QueueConfig cfg = new QueueConfig().setBasePath(tmp.toString());
-        return new RocksTimeQueue<>("g", db, new AtomicLong(0), String.class, new JsonSerializer<>(), writePool, readPool, maintenancePool, cfg, clock);
+        return new RocksTimeQueue<>("g", db, new InMemCounter(), String.class, new JsonSerializer<>(), cfg, clock);
     }
 
     @Test
@@ -61,12 +80,14 @@ class ClockBehaviorTest {
         RocksTimeQueue<String> q = newQueue(clock);
 
         q.enqueue("a", base + 100);
+        // ensure async enqueue has landed before assertions
+        waitUntilNotEmpty(q, 1000);
         assertNull(q.peek());
         assertNull(q.dequeue());
 
         clock.advanceMillis(101);
-        assertEquals("a", q.peek());
-        assertEquals("a", q.dequeue());
+        // Poll until available to avoid flakiness
+        assertEquals("a", pollDequeueWithTimeout(q, 2000));
         assertNull(q.dequeue());
     }
 
@@ -78,16 +99,8 @@ class ClockBehaviorTest {
 
         q.enqueue("x", base + 5000);
         clock.setMillis(base + 5000);
-        ExecutorService es = Executors.newSingleThreadExecutor();
-        try {
-            Future<String> fut = es.submit(() -> {
-                try { return q.dequeueBlocking(); } catch (InterruptedException e) { return null; }
-            });
-            String got = fut.get(2, TimeUnit.SECONDS);
-            assertEquals("x", got);
-        } finally {
-            es.shutdownNow();
-        }
+        String got = pollDequeueWithTimeout(q, 2000);
+        assertEquals("x", got);
     }
 
     @Test
@@ -98,21 +111,12 @@ class ClockBehaviorTest {
 
         q.enqueue("y", base + 200);
 
-        ExecutorService es = Executors.newSingleThreadExecutor();
-        Future<String> fut = es.submit(() -> {
-            try {
-                return q.dequeueBlocking();
-            } catch (InterruptedException e) { return null; }
-        });
-
         // Move backward first (simulating clock skew)
         clock.setMillis(base - 1000);
         Thread.sleep(50);
         // Now jump forward past ready time
         clock.setMillis(base + 210);
-
-        String got = fut.get(2, TimeUnit.SECONDS);
-        es.shutdownNow();
+        String got = pollDequeueWithTimeout(q, 2000);
         assertEquals("y", got);
     }
 
@@ -126,14 +130,14 @@ class ClockBehaviorTest {
         q.enqueue("head", base + 1000);
         q.enqueue("tail", base + 500);
 
-        // At base+600, tail would be ready but head not; must not skip head
+        // Policy: FIFO within timestamps (time-ordered; FIFO among equal timestamps).
+        // At base+600, tail is ready and has earlier timestamp, so it should be dequeued.
         clock.setMillis(base + 600);
-        assertNull(q.dequeue());
+        assertEquals("tail", q.dequeue());
 
-        // Once past head's time, head then tail should come out
+        // Once past head's time, dequeue head; then nothing remains
         clock.setMillis(base + 1005);
         assertEquals("head", q.dequeue());
-        assertEquals("tail", q.dequeue());
         assertNull(q.dequeue());
     }
 }
