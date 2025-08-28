@@ -67,10 +67,8 @@ public final class MappedLongCounter implements Counter, AutoCloseable {
     }
 
     private void write(long v) {
-        ByteBuffer tmp = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(v);
-        tmp.flip();
-        mapped.position(0);
-        mapped.put(tmp);
+        // Absolute write avoids races on the shared position/limit of the mapped buffer under concurrency
+        mapped.putLong(0, v);
         // Do not force() every time to avoid overhead; rely on OS flush and force on close
     }
 

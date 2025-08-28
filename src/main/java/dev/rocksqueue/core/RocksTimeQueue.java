@@ -6,17 +6,21 @@ import dev.rocksqueue.ser.Serializer;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
+import org.rocksdb.ReadOptions;
+import org.rocksdb.Slice;
+import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 
 import java.time.Clock;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * RocksDB-backed time-based FIFO queue with binary-encoded keys.
  * Per-queue-group instance (separate RocksDB per group).
  */
-public class RocksTimeQueue<T> implements TimeQueue<T> {
+public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     private final String group;
     private final RocksDB db;
     private final Counter insertionCounter;
@@ -27,6 +31,20 @@ public class RocksTimeQueue<T> implements TimeQueue<T> {
     private final Object dequeueLock; // shared per-group lock when provided by client
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
+
+    // Dequeue fast-path state (accessed only under dequeueLock)
+    // We store key+value to be able to restore the cache on clean shutdown without losing items.
+    private static final class CacheEntry<E> {
+        final byte[] key;    // 16-byte encoded key (ts, seq)
+        final byte[] value;  // serialized payload
+        final E item;        // deserialized payload for fast return
+        CacheEntry(byte[] key, byte[] value, E item) { this.key = key; this.value = value; this.item = item; }
+    }
+    private final Deque<CacheEntry<T>> readyCache = new ArrayDeque<>();
+    // Rolling cursor to avoid expensive seekToFirst each refill; updated to successor of last processed key
+    private byte[] scanStartKey = null;
+
+    // Resume point removed: we always start scans from head with a fresh iterator
 
     public RocksTimeQueue(
             String group,
@@ -104,30 +122,14 @@ public class RocksTimeQueue<T> implements TimeQueue<T> {
     public T dequeue() {
         if (closed.get()) return null;
         synchronized (dequeueLock) {
-            long now = clock.millis();
-            try (RocksIterator it = db.newIterator()) {
-                it.seekToFirst();
-                while (it.isValid()) {
-                    byte[] key = it.key();
-                    if (key == null || key.length != 16) { it.next(); continue; }
-                    long ts = BinaryKeyEncoder.decodeTimestamp(key);
-                    if (ts > now) {
-                        return null; // head not ready yet
-                    }
-                    // Found ready item
-                    byte[] value = it.value();
-                    T item = serializer.deserialize(value, type);
-                    try (WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL())) {
-                        try {
-                            db.delete(wo, key);
-                        } catch (RocksDBException e) {
-                            throw new RuntimeException("dequeue delete failed", e);
-                        }
-                    }
-                    return item;
-                }
-            }
-            return null;
+            // Serve from cache if available
+            CacheEntry<T> cached = readyCache.pollFirst();
+            if (cached != null) return cached.item;
+
+            // Refill cache from DB up to now
+            refillReadyCache(Math.max(1, config.getDequeueBatchSize()));
+            CacheEntry<T> next = readyCache.pollFirst();
+            return next == null ? null : next.item;
         }
     }
 
@@ -180,5 +182,152 @@ public class RocksTimeQueue<T> implements TimeQueue<T> {
     @Override
     public void close() {
         closed.set(true);
+        synchronized (dequeueLock) {
+            // On clean shutdown, persist cached entries back into RocksDB using their original keys
+            if (!readyCache.isEmpty()) {
+                try (WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL());
+                     WriteBatch wb = new WriteBatch()) {
+                    for (CacheEntry<T> e : readyCache) {
+                        wb.put(e.key, e.value);
+                    }
+                    db.write(wo, wb);
+                } catch (RocksDBException e) {
+                    // Best-effort restore; if it fails we still clear the cache to avoid memory retention
+                }
+            }
+            readyCache.clear();
+        }
     }
+
+    private void refillReadyCache(int batchSize) {
+        final long now = clock.millis();
+        byte[] ub = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
+
+        try (Slice ubSlice = new Slice(ub);
+             ReadOptions ro = new ReadOptions()
+                 .setVerifyChecksums(false)
+                 .setFillCache(false)
+                 .setReadaheadSize(config.getReadaheadSizeBytes())
+                 .setIterateUpperBound(ubSlice);
+             RocksIterator it = db.newIterator(ro);
+             WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL());
+             WriteBatch wb = new WriteBatch()) {
+            long tSeekAccum = 0L;
+            long tScanStart = System.nanoTime();
+
+            int collected = 0;
+            byte[] lastKeyProcessed = null;
+
+            // Phase 1: seek to rolling cursor (if present) and scan to ub
+            long tSeekStart = System.nanoTime();
+            if (scanStartKey != null) {
+                it.seek(scanStartKey);
+            } else {
+                it.seekToFirst();
+            }
+            long tSeekEnd = System.nanoTime();
+            tSeekAccum += (tSeekEnd - tSeekStart);
+
+            while (it.isValid() && collected < batchSize) {
+                byte[] k = it.key();
+                if (k == null || k.length != 16) { it.next(); continue; }
+
+                long ts = BinaryKeyEncoder.decodeTimestamp(k);
+                if (ts > now) break; // safety; upper bound applied via iterateUpperBound
+
+                byte[] keyCopy = java.util.Arrays.copyOf(k, k.length);
+                byte[] valCopy = java.util.Arrays.copyOf(it.value(), it.value().length);
+                T item = serializer.deserialize(valCopy, type);
+                readyCache.addLast(new CacheEntry<>(keyCopy, valCopy, item));
+                wb.singleDelete(keyCopy);
+                lastKeyProcessed = keyCopy;
+                collected++;
+                it.next();
+            }
+
+            // Phase 2: wrap to the beginning and scan up to scanStartKey (exclusive) if batch not filled
+            if (collected < batchSize && scanStartKey != null) {
+                tSeekStart = System.nanoTime();
+                it.seekToFirst();
+                tSeekEnd = System.nanoTime();
+                tSeekAccum += (tSeekEnd - tSeekStart);
+
+                while (it.isValid() && collected < batchSize) {
+                    byte[] k = it.key();
+                    if (k == null || k.length != 16) { it.next(); continue; }
+                    // Stop before reaching the old scanStartKey to avoid reprocessing
+                    if (compareBytes(k, scanStartKey) >= 0) break;
+
+                    long ts = BinaryKeyEncoder.decodeTimestamp(k);
+                    if (ts > now) break;
+
+                    byte[] keyCopy = java.util.Arrays.copyOf(k, k.length);
+                    byte[] valCopy = java.util.Arrays.copyOf(it.value(), it.value().length);
+                    T item = serializer.deserialize(valCopy, type);
+                    readyCache.addLast(new CacheEntry<>(keyCopy, valCopy, item));
+                    wb.singleDelete(keyCopy);
+                    lastKeyProcessed = keyCopy;
+                    collected++;
+                    it.next();
+                }
+            }
+
+            long tScanEnd = System.nanoTime();
+
+            if (collected == 0) {
+                // Nothing ready
+                return;
+            }
+
+            long tWriteStart = System.nanoTime();
+            db.write(wo, wb);
+            long tWriteEnd = System.nanoTime();
+
+            // Debug timings: seek, scan+deserialize, delete(commit)
+            long seekMs = tSeekAccum / 1_000_000;
+            long scanMs = (tScanEnd - tScanStart) / 1_000_000;
+            long delMs  = (tWriteEnd - tWriteStart) / 1_000_000;
+//            System.out.println("[rocksqueue] group=" + group +
+//                    " batchItems=" + collected +
+//                    " seekMs=" + seekMs +
+//                    " scanMs=" + scanMs +
+//                    " deleteMs=" + delMs);
+
+            // Advance rolling cursor to successor of the last processed key
+            if (lastKeyProcessed != null) {
+                scanStartKey = lexicographicSuccessor(lastKeyProcessed);
+            }
+        } catch (RocksDBException e) {
+            // On failure, clear cache to avoid duplicates and do NOT advance lastKey
+            readyCache.clear();
+            throw new RuntimeException("dequeue batch delete failed", e);
+        }
+    }
+
+    private static int compareBytes(byte[] a, byte[] b) {
+        int len = Math.min(a.length, b.length);
+        for (int i = 0; i < len; i++) {
+            int ai = a[i] & 0xFF;
+            int bi = b[i] & 0xFF;
+            if (ai != bi) return ai - bi;
+        }
+        return a.length - b.length;
+    }
+
+    // Compute lexicographic successor for a fixed-length big-endian key
+    private static byte[] lexicographicSuccessor(byte[] key) {
+        if (key == null) return null;
+        byte[] out = java.util.Arrays.copyOf(key, key.length);
+        for (int i = out.length - 1; i >= 0; i--) {
+            int b = out[i] & 0xFF;
+            if (b != 0xFF) {
+                out[i] = (byte) (b + 1);
+                for (int j = i + 1; j < out.length; j++) out[j] = 0;
+                return out;
+            }
+        }
+        // overflow, no successor
+        return null;
+    }
+
 }

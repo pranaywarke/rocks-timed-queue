@@ -79,7 +79,7 @@ class QueuePerfBucketsTest {
         // Params
         int totalMinutes = getIntProp("q.totalMinutes", 30);
         int bucketMinutes = getIntProp("q.bucketMinutes", 5);
-        int itemsPerBucket = getIntProp("q.itemsPerBucket", 100);
+        int itemsPerBucket = getIntProp("q.itemsPerBucket", 1000);
         int valueSizeBytes = getIntProp("q.valueSizeBytes", 16);
         boolean syncWrites = getBoolProp("q.syncWrites", false);
         boolean disableWAL = getBoolProp("q.disableWAL", false);

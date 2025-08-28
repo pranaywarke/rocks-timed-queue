@@ -18,4 +18,8 @@ public class QueueConfig {
     private int writeBufferSizeMB = 64;       // per memtable
     private int maxWriteBufferNumber = 3;
     private CompressionType compressionType = CompressionType.LZ4_COMPRESSION;
+
+    // Queue behavior
+    private int dequeueBatchSize = 2000;       // number of ready items to collect per iterator scan
+    private long readaheadSizeBytes = 16L * 1024 * 1024; // 4MB readahead for iterator scans
 }
