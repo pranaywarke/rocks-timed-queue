@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="dev.rocksqueue.integration.QueueIntegrationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2025-08-27T18:17:55" hostname="Pranays-MacBook-Pro.local" time="0.672">
-  <properties/>
-  <testcase name="delayAndPeekBehavior()" classname="dev.rocksqueue.integration.QueueIntegrationTest" time="0.577"/>
-  <testcase name="fifoWithinSameTimestampAndGroupIsolation()" classname="dev.rocksqueue.integration.QueueIntegrationTest" time="0.094"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
