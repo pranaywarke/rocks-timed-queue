@@ -3,18 +3,13 @@ package dev.rocksqueue.core;
 import dev.rocksqueue.api.TimeQueue;
 import dev.rocksqueue.config.QueueConfig;
 import dev.rocksqueue.ser.Serializer;
-import org.rocksdb.RocksDB;
-import org.rocksdb.RocksDBException;
-import org.rocksdb.RocksIterator;
-import org.rocksdb.ReadOptions;
-import org.rocksdb.Slice;
-import org.rocksdb.WriteBatch;
-import org.rocksdb.WriteOptions;
+import org.rocksdb.*;
 
 import java.time.Clock;
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * RocksDB-backed time-based FIFO queue with binary-encoded keys.
@@ -38,8 +33,14 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         final byte[] key;    // 16-byte encoded key (ts, seq)
         final byte[] value;  // serialized payload
         final E item;        // deserialized payload for fast return
-        CacheEntry(byte[] key, byte[] value, E item) { this.key = key; this.value = value; this.item = item; }
+
+        CacheEntry(byte[] key, byte[] value, E item) {
+            this.key = key;
+            this.value = value;
+            this.item = item;
+        }
     }
+
     private final Deque<CacheEntry<T>> readyCache = new ArrayDeque<>();
     // Rolling cursor to avoid expensive seekToFirst each refill; updated to successor of last processed key
     private byte[] scanStartKey = null;
@@ -104,11 +105,22 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         this.dequeueLock = (dequeueLock != null) ? dequeueLock : new Object();
     }
 
+    private long lastClock = 0;
+    private AtomicBoolean resetIteratorAt = new AtomicBoolean(false);
+
     @Override
     public void enqueue(T item, long executeAtMillis) {
         if (closed.get()) throw new IllegalStateException("Queue is closed");
         if (executeAtMillis < 0) throw new IllegalArgumentException("executeAtMillis must be >= 0");
         long seq = insertionCounter.incrementAndGet();
+        long now = clock.millis();
+        if (executeAtMillis < now) {
+            executeAtMillis = now;
+        }
+        if (now < lastClock) {
+            resetIteratorAt.set(true);
+        }
+        lastClock = now;
         byte[] key = BinaryKeyEncoder.encode(executeAtMillis, seq);
         byte[] value = serializer.serialize(item);
         try (WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL())) {
@@ -141,7 +153,10 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             it.seekToFirst();
             while (it.isValid()) {
                 byte[] key = it.key();
-                if (key == null || key.length != 16) { it.next(); continue; }
+                if (key == null || key.length != 16) {
+                    it.next();
+                    continue;
+                }
                 long ts = BinaryKeyEncoder.decodeTimestamp(key);
                 if (ts > now) {
                     return null; // head not ready
@@ -206,10 +221,11 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 
         try (Slice ubSlice = new Slice(ub);
              ReadOptions ro = new ReadOptions()
-                 .setVerifyChecksums(false)
-                 .setFillCache(false)
-                 .setReadaheadSize(config.getReadaheadSizeBytes())
-                 .setIterateUpperBound(ubSlice);
+                     .setVerifyChecksums(false)
+                     .setFillCache(false)
+
+                     .setReadaheadSize(config.getReadaheadSizeBytes())
+                     .setIterateUpperBound(ubSlice);
              RocksIterator it = db.newIterator(ro);
              WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL());
              WriteBatch wb = new WriteBatch()) {
@@ -221,17 +237,21 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 
             // Phase 1: seek to rolling cursor (if present) and scan to ub
             long tSeekStart = System.nanoTime();
-            if (scanStartKey != null) {
+            if (scanStartKey != null && !resetIteratorAt.get()) {
                 it.seek(scanStartKey);
             } else {
                 it.seekToFirst();
+                resetIteratorAt.set(false);
             }
             long tSeekEnd = System.nanoTime();
             tSeekAccum += (tSeekEnd - tSeekStart);
 
             while (it.isValid() && collected < batchSize) {
                 byte[] k = it.key();
-                if (k == null || k.length != 16) { it.next(); continue; }
+                if (k == null || k.length != 16) {
+                    it.next();
+                    continue;
+                }
 
                 long ts = BinaryKeyEncoder.decodeTimestamp(k);
                 if (ts > now) break; // safety; upper bound applied via iterateUpperBound
@@ -244,33 +264,6 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 lastKeyProcessed = keyCopy;
                 collected++;
                 it.next();
-            }
-
-            // Phase 2: wrap to the beginning and scan up to scanStartKey (exclusive) if batch not filled
-            if (collected < batchSize && scanStartKey != null) {
-                tSeekStart = System.nanoTime();
-                it.seekToFirst();
-                tSeekEnd = System.nanoTime();
-                tSeekAccum += (tSeekEnd - tSeekStart);
-
-                while (it.isValid() && collected < batchSize) {
-                    byte[] k = it.key();
-                    if (k == null || k.length != 16) { it.next(); continue; }
-                    // Stop before reaching the old scanStartKey to avoid reprocessing
-                    if (compareBytes(k, scanStartKey) >= 0) break;
-
-                    long ts = BinaryKeyEncoder.decodeTimestamp(k);
-                    if (ts > now) break;
-
-                    byte[] keyCopy = java.util.Arrays.copyOf(k, k.length);
-                    byte[] valCopy = java.util.Arrays.copyOf(it.value(), it.value().length);
-                    T item = serializer.deserialize(valCopy, type);
-                    readyCache.addLast(new CacheEntry<>(keyCopy, valCopy, item));
-                    wb.singleDelete(keyCopy);
-                    lastKeyProcessed = keyCopy;
-                    collected++;
-                    it.next();
-                }
             }
 
             long tScanEnd = System.nanoTime();
@@ -287,7 +280,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             // Debug timings: seek, scan+deserialize, delete(commit)
             long seekMs = tSeekAccum / 1_000_000;
             long scanMs = (tScanEnd - tScanStart) / 1_000_000;
-            long delMs  = (tWriteEnd - tWriteStart) / 1_000_000;
+            long delMs = (tWriteEnd - tWriteStart) / 1_000_000;
 //            System.out.println("[rocksqueue] group=" + group +
 //                    " batchItems=" + collected +
 //                    " seekMs=" + seekMs +
@@ -295,9 +288,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 //                    " deleteMs=" + delMs);
 
             // Advance rolling cursor to successor of the last processed key
-            if (lastKeyProcessed != null) {
-                scanStartKey = lexicographicSuccessor(lastKeyProcessed);
-            }
+            scanStartKey = lexicographicSuccessor(lastKeyProcessed);
         } catch (RocksDBException e) {
             // On failure, clear cache to avoid duplicates and do NOT advance lastKey
             readyCache.clear();

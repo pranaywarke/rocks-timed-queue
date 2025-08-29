@@ -45,12 +45,20 @@ class QueueThroughputSmokeTest {
         try { return Integer.parseInt(v); } catch (NumberFormatException e) { return def; }
     }
 
+    private static String makeAsciiPayload(int bytes) {
+        if (bytes <= 0) return "";
+        return "a".repeat(bytes);
+    }
+
     @Test
     void enqueue_100k_and_dequeue_immediately_print_throughput() throws Exception {
-        int n = getIntProp("q.n", 500000);
-        boolean disableWAL = getBoolProp("q.disableWAL", true);
+        int n = getIntProp("q.n", 1000000);
+        boolean disableWAL = getBoolProp("q.disableWAL", false);
         boolean syncWrites = getBoolProp("q.syncWrites", false);
-        int batch = getBatchProp("q.batch", 2000);
+        int batch = getBatchProp("q.batch", 20000);
+        int payloadBytes = getIntProp("q.payloadBytes", 512);
+
+        String payload = makeAsciiPayload(payloadBytes);
 
         tmp = Files.createTempDirectory("rocksqueue-throughput-");
         QueueConfig cfg = new QueueConfig()
@@ -64,135 +72,7 @@ class QueueThroughputSmokeTest {
 
         long now = System.currentTimeMillis();
         for (int i = 0; i < n; i++) {
-            q.enqueue("asasasasavasasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasaasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasaa32vasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavsasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasas4asasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasas2323avasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasava2323sasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +"asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasav" +
-                    "asasasasavasasasasavasasasasavasasasasavasasasasavasasasasav-" + i, now);
+            q.enqueue(payload, now);
         }
 
         long start = System.nanoTime();
