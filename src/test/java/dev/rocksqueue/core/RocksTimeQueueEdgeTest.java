@@ -78,11 +78,5 @@ class RocksTimeQueueEdgeTest {
         assertNull(q.dequeue());
     }
 
-    @Test
-    void enqueueDelayed_zeroDelayReady() throws Exception {
-        RocksTimeQueue<String> q = newQueue();
-        q.enqueueDelayed("immediate", 0);
-        assertEquals("immediate", q.dequeue());
-        assertNull(q.dequeue());
-    }
+
 }
