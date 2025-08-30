@@ -1,14 +1,12 @@
 package dev.rocksqueue.integration;
 
 import dev.rocksqueue.config.QueueConfig;
-import dev.rocksqueue.core.Counter;
 import dev.rocksqueue.core.RocksTimeQueue;
 import dev.rocksqueue.ser.JsonSerializer;
 import dev.rocksqueue.testing.MutableClock;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 
 import java.nio.file.Files;
@@ -41,11 +39,9 @@ class QueuePerfBucketsTest {
     static { RocksDB.loadLibrary(); }
 
     private Path tmp;
-    private RocksDB db;
 
     @AfterEach
     void tearDown() throws Exception {
-        if (db != null) db.close();
         if (tmp != null) {
             try {
                 Files.walk(tmp)
@@ -55,12 +51,7 @@ class QueuePerfBucketsTest {
         }
     }
 
-    static class InMemCounter implements Counter {
-        private final AtomicLong al = new AtomicLong(0);
-        @Override public long get() { return al.get(); }
-        @Override public long incrementAndGet() { return al.incrementAndGet(); }
-        @Override public void set(long value) { al.set(value); }
-    }
+    // Counter now managed by RocksTimeQueue
 
     private static int getIntProp(String key, int def) {
         String v = System.getProperty(key);
@@ -88,8 +79,6 @@ class QueuePerfBucketsTest {
         long bucketMillis = TimeUnit.MINUTES.toMillis(bucketMinutes);
 
         tmp = Files.createTempDirectory("rocksqueue-perf-");
-        Options opts = new Options().setCreateIfMissing(true);
-        db = RocksDB.open(opts, tmp.toString());
 
         long base = 1_000_000L;
         MutableClock clock = new MutableClock(java.time.Instant.ofEpochMilli(base), ZoneId.of("UTC"));
@@ -99,7 +88,7 @@ class QueuePerfBucketsTest {
                 .setDisableWAL(disableWAL);
 
         RocksTimeQueue<String> q = new RocksTimeQueue<>(
-                "g", db, new InMemCounter(), String.class, new JsonSerializer<>(), cfg, clock);
+                "g", String.class, new JsonSerializer<>(), cfg, clock);
 
         // Prepare payload template to fixed size
         String prefix = "item-";

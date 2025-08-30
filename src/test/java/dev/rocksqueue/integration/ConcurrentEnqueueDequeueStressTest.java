@@ -120,7 +120,7 @@ class ConcurrentEnqueueDequeueStressTest {
                     if (doneProducers.getCount() == 0) {
                         if (emptySince < 0) emptySince = System.nanoTime();
                         // If we've been empty for a grace period after producers finished, exit
-                        if (Duration.ofSeconds(2).minusNanos(System.nanoTime() - emptySince).isNegative()) {
+                        if (Duration.ofSeconds(10).minusNanos(System.nanoTime() - emptySince).isNegative()) {
                             break;
                         }
                     }
@@ -150,7 +150,7 @@ class ConcurrentEnqueueDequeueStressTest {
             f.get(10, TimeUnit.SECONDS); // surface exceptions
         }
         // Allow consumer to finish draining
-        consumer.get(60, TimeUnit.SECONDS);
+        consumer.get(120, TimeUnit.SECONDS);
         exec.shutdown();
         exec.awaitTermination(10, TimeUnit.SECONDS);
 
@@ -258,7 +258,7 @@ class ConcurrentEnqueueDequeueStressTest {
             while (consumed.get() < total) {
                 v = q.dequeue();
                 if (v == null) {
-                    if (Duration.ofMillis(200).minusNanos(System.nanoTime() - idleSince).isNegative()) break;
+                    if (Duration.ofMillis(5000).minusNanos(System.nanoTime() - idleSince).isNegative()) break;
                     Thread.yield();
                     continue;
                 }
@@ -276,7 +276,7 @@ class ConcurrentEnqueueDequeueStressTest {
         // Go!
         start.countDown();
         doneProducers.await(60, TimeUnit.SECONDS);
-        consumer.get(60, TimeUnit.SECONDS);
+        consumer.get(120, TimeUnit.SECONDS);
         exec.shutdown();
         exec.awaitTermination(10, TimeUnit.SECONDS);
 

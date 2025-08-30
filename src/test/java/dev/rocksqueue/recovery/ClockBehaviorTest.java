@@ -2,13 +2,12 @@ package dev.rocksqueue.recovery;
 
 import dev.rocksqueue.config.QueueConfig;
 import dev.rocksqueue.core.RocksTimeQueue;
-import dev.rocksqueue.core.Counter;
 import dev.rocksqueue.ser.JsonSerializer;
 import dev.rocksqueue.testing.MutableClock;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
+import org.rocksdb.Options;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,11 +23,9 @@ class ClockBehaviorTest {
     static { RocksDB.loadLibrary(); }
 
     private Path tmp;
-    private RocksDB db;
 
     @AfterEach
     void tearDown() throws Exception {
-        if (db != null) db.close();
         if (tmp != null) {
             try {
                 Files.walk(tmp)
@@ -58,19 +55,12 @@ class ClockBehaviorTest {
         return null;
     }
 
-    static class InMemCounter implements Counter {
-        private final AtomicLong al = new AtomicLong(0);
-        @Override public long get() { return al.get(); }
-        @Override public long incrementAndGet() { return al.incrementAndGet(); }
-        @Override public void set(long value) { al.set(value); }
-    }
+    // Counter is managed by RocksTimeQueue
 
     private RocksTimeQueue<String> newQueue(MutableClock clock) throws Exception {
         tmp = Files.createTempDirectory("rocksqueue-clock-");
-        Options opts = new Options().setCreateIfMissing(true);
-        db = RocksDB.open(opts, tmp.toString());
         QueueConfig cfg = new QueueConfig().setBasePath(tmp.toString());
-        return new RocksTimeQueue<>("g", db, new InMemCounter(), String.class, new JsonSerializer<>(), cfg, clock);
+        return new RocksTimeQueue<>("g", String.class, new JsonSerializer<>(), cfg, clock);
     }
 
     @Test

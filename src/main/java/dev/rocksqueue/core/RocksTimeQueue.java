@@ -10,6 +10,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * RocksDB-backed time-based FIFO queue with binary-encoded keys.
@@ -23,9 +24,19 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     private final Serializer<T> serializer;
     private final QueueConfig config;
     private final Clock clock;
-    private final Object dequeueLock; // shared per-group lock when provided by client
+    private final Object dequeueLock; // per-group lock internal to this instance
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    // Reusable options
+    private final org.rocksdb.WriteOptions writeOpts;
+    private final org.rocksdb.ReadOptions readOptsNoCache;
+    private long lastClock = 0;
+    private AtomicBoolean resetIteratorAt = new AtomicBoolean(false);
+    private final Deque<CacheEntry<T>> readyCache = new ArrayDeque<>();
+    // Rolling cursor to avoid expensive seekToFirst each refill; updated to successor of last processed key
+    private byte[] scanStartKey = null;
+
+    // Resume point removed: we always start scans from head with a fresh iterator
 
     // Dequeue fast-path state (accessed only under dequeueLock)
     // We store key+value to be able to restore the cache on clean shutdown without losing items.
@@ -41,77 +52,89 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         }
     }
 
-    private final Deque<CacheEntry<T>> readyCache = new ArrayDeque<>();
-    // Rolling cursor to avoid expensive seekToFirst each refill; updated to successor of last processed key
-    private byte[] scanStartKey = null;
+    private static String sanitize(String name) {
+        return name.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
 
-    // Resume point removed: we always start scans from head with a fresh iterator
+    private long recoverCounterFromData(RocksDB db) {
+        try (RocksIterator it = db.newIterator()) {
+            it.seekToLast();
+            while (it.isValid()) {
+                byte[] key = it.key();
+                if (key != null && key.length == 16) {
+                    java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(key).order(java.nio.ByteOrder.BIG_ENDIAN);
+                    return buf.getLong(8);
+                }
+                it.prev();
+            }
+            return 0L;
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
 
+
+    // Public constructors: RocksTimeQueue manages its own DB, counter and lock per group
     public RocksTimeQueue(
             String group,
-            RocksDB db,
-            Counter insertionCounter,
             Class<T> type,
             Serializer<T> serializer,
             QueueConfig config
     ) {
-        this(group, db, insertionCounter, type, serializer, config, Clock.systemUTC(), null);
+        this(group, type, serializer, config, null);
     }
 
-    // Alternate constructor allowing custom Clock injection (used in tests)
     public RocksTimeQueue(
             String group,
-            RocksDB db,
-            Counter insertionCounter,
             Class<T> type,
             Serializer<T> serializer,
             QueueConfig config,
             Clock clock
     ) {
-        this(group, db, insertionCounter, type, serializer, config, clock, null);
-    }
-
-    // Constructor used by QueueClient to provide a shared per-group dequeue lock
-    public RocksTimeQueue(
-            String group,
-            RocksDB db,
-            Counter insertionCounter,
-            Class<T> type,
-            Serializer<T> serializer,
-            QueueConfig config,
-            Object dequeueLock
-    ) {
-        this(group, db, insertionCounter, type, serializer, config, Clock.systemUTC(), dequeueLock);
-    }
-
-    // Internal canonical constructor
-    private RocksTimeQueue(
-            String group,
-            RocksDB db,
-            Counter insertionCounter,
-            Class<T> type,
-            Serializer<T> serializer,
-            QueueConfig config,
-            Clock clock,
-            Object dequeueLock
-    ) {
         this.group = Objects.requireNonNull(group, "group");
-        this.db = Objects.requireNonNull(db, "db");
-        this.insertionCounter = Objects.requireNonNull(insertionCounter, "insertionCounter");
         this.type = Objects.requireNonNull(type, "type");
         this.serializer = Objects.requireNonNull(serializer, "serializer");
         this.config = Objects.requireNonNull(config, "config");
-        this.clock = Objects.requireNonNull(clock, "clock");
-        this.dequeueLock = (dequeueLock != null) ? dequeueLock : new Object();
+        this.clock = (clock != null) ? clock : Clock.systemUTC();
+        this.dequeueLock = new Object();
+
+        // Open per-group RocksDB
+        try {
+            String path = config.getBasePath() + java.io.File.separator + sanitize(group);
+            new java.io.File(path).mkdirs();
+            org.rocksdb.Options options = new org.rocksdb.Options()
+                    .setCreateIfMissing(true)
+                    .setCompressionType(config.getCompressionType())
+                    .setWriteBufferSize((long) config.getWriteBufferSizeMB() * 1024 * 1024)
+                    .setMaxWriteBufferNumber(config.getMaxWriteBufferNumber());
+            this.db = org.rocksdb.RocksDB.open(options, path);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to open RocksDB for group=" + group, e);
+        }
+
+        // Initialize reusable options
+        this.writeOpts = new org.rocksdb.WriteOptions()
+                .setSync(config.isSyncWrites())
+                .setDisableWAL(config.isDisableWAL());
+        this.readOptsNoCache = new org.rocksdb.ReadOptions()
+                .setVerifyChecksums(false)
+                .setFillCache(false)
+                .setReadaheadSize(config.getReadaheadSizeBytes());
+
+        // Open mapped counter and recover from data if needed
+        String counterPath = config.getBasePath() + java.io.File.separator + sanitize(group) + java.io.File.separator + "insertion.counter";
+        MappedLongCounter mapped = MappedLongCounter.open(counterPath);
+        long fromData = recoverCounterFromData(db);
+        if (fromData > mapped.get()) mapped.set(fromData);
+        this.insertionCounter = mapped;
     }
 
-    private long lastClock = 0;
-    private AtomicBoolean resetIteratorAt = new AtomicBoolean(false);
+
+    AtomicLong temp = new AtomicLong();
 
     @Override
     public void enqueue(T item, long executeAtMillis) {
         if (closed.get()) throw new IllegalStateException("Queue is closed");
-        if (executeAtMillis < 0) throw new IllegalArgumentException("executeAtMillis must be >= 0");
         long seq = insertionCounter.incrementAndGet();
         long now = clock.millis();
         if (executeAtMillis < now) {
@@ -120,12 +143,13 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         if (now < lastClock) {
             resetIteratorAt.set(true);
         }
+
         lastClock = now;
         byte[] key = BinaryKeyEncoder.encode(executeAtMillis, seq);
         byte[] value = serializer.serialize(item);
-        try (WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL())) {
-            db.put(wo, key, value);
-        } catch (RocksDBException e) {
+        try {
+            db.put(writeOpts, key, value);
+        } catch (org.rocksdb.RocksDBException e) {
             throw new RuntimeException("enqueue failed", e);
         }
     }
@@ -134,14 +158,15 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     public T dequeue() {
         if (closed.get()) return null;
         synchronized (dequeueLock) {
-            // Serve from cache if available
             CacheEntry<T> cached = readyCache.pollFirst();
-            if (cached != null) return cached.item;
-
+            if (cached != null) {
+                return cached.item;
+            }
             // Refill cache from DB up to now
             refillReadyCache(Math.max(1, config.getDequeueBatchSize()));
             CacheEntry<T> next = readyCache.pollFirst();
-            return next == null ? null : next.item;
+            if (next == null) return null;
+            return next.item;
         }
     }
 
@@ -149,7 +174,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     public T peek() {
         if (closed.get()) return null;
         long now = clock.millis();
-        try (RocksIterator it = db.newIterator()) {
+        try (RocksIterator it = db.newIterator(readOptsNoCache)) {
             it.seekToFirst();
             while (it.isValid()) {
                 byte[] key = it.key();
@@ -183,7 +208,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         long s = sizeApproximate();
         if (s >= 0) return s == 0;
         // Fallback: quick iterator check
-        try (RocksIterator it = db.newIterator()) {
+        try (RocksIterator it = db.newIterator(readOptsNoCache)) {
             it.seekToFirst();
             while (it.isValid()) {
                 byte[] key = it.key();
@@ -198,20 +223,35 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     public void close() {
         closed.set(true);
         synchronized (dequeueLock) {
-            // On clean shutdown, persist cached entries back into RocksDB using their original keys
+            // best-effort persist counter to a meta key
+            try {
+                java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.BIG_ENDIAN).putLong(insertionCounter.get());
+                db.put(writeOpts, "meta:insertion_counter".getBytes(), buf.array());
+            } catch (org.rocksdb.RocksDBException ignored) {
+            }
+            try {
+                ((AutoCloseable) insertionCounter).close();
+            } catch (Exception ignored) {
+            }
             if (!readyCache.isEmpty()) {
-                // Force durability for restore: always WAL-enabled and fsync to ensure items survive power loss
-                try (WriteOptions wo = new WriteOptions().setSync(true).setDisableWAL(false);
-                     WriteBatch wb = new WriteBatch()) {
+                try (org.rocksdb.WriteBatch batch = new org.rocksdb.WriteBatch()) {
                     for (CacheEntry<T> e : readyCache) {
-                        wb.put(e.key, e.value);
+                        batch.put(e.key, e.value);
                     }
-                    db.write(wo, wb);
-                } catch (RocksDBException e) {
-                    // Best-effort restore; if it fails we still clear the cache to avoid memory retention
+                    db.write(writeOpts, batch);
+                } catch (org.rocksdb.RocksDBException ignored) {
                 }
             }
+            try {
+                readOptsNoCache.close();
+            } catch (Exception ignored) {
+            }
+            try {
+                writeOpts.close();
+            } catch (Exception ignored) {
+            }
             readyCache.clear();
+            db.close();
         }
     }
 
@@ -223,28 +263,20 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
              ReadOptions ro = new ReadOptions()
                      .setVerifyChecksums(false)
                      .setFillCache(false)
-
                      .setReadaheadSize(config.getReadaheadSizeBytes())
                      .setIterateUpperBound(ubSlice);
-             RocksIterator it = db.newIterator(ro);
-             WriteOptions wo = new WriteOptions().setSync(config.isSyncWrites()).setDisableWAL(config.isDisableWAL());
-             WriteBatch wb = new WriteBatch()) {
-            long tSeekAccum = 0L;
-            long tScanStart = System.nanoTime();
+             RocksIterator it = db.newIterator(ro)) {
 
             int collected = 0;
-            byte[] lastKeyProcessed = null;
-
-            // Phase 1: seek to rolling cursor (if present) and scan to ub
-            long tSeekStart = System.nanoTime();
+            // Seek using rolling cursor only if it's within the current upper bound; otherwise fallback to head
             if (scanStartKey != null && !resetIteratorAt.get()) {
                 it.seek(scanStartKey);
             } else {
                 it.seekToFirst();
                 resetIteratorAt.set(false);
             }
-            long tSeekEnd = System.nanoTime();
-            tSeekAccum += (tSeekEnd - tSeekStart);
+
+            java.util.ArrayList<CacheEntry<T>> staged = new java.util.ArrayList<>(batchSize);
 
             while (it.isValid() && collected < batchSize) {
                 byte[] k = it.key();
@@ -259,40 +291,38 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 byte[] keyCopy = java.util.Arrays.copyOf(k, k.length);
                 byte[] valCopy = java.util.Arrays.copyOf(it.value(), it.value().length);
                 T item = serializer.deserialize(valCopy, type);
-                readyCache.addLast(new CacheEntry<>(keyCopy, valCopy, item));
-                wb.singleDelete(keyCopy);
-                lastKeyProcessed = keyCopy;
+                staged.add(new CacheEntry<>(keyCopy, valCopy, item));
                 collected++;
                 it.next();
             }
+            if (it.isValid()) {
+                scanStartKey = it.key();
+            }else{
+                scanStartKey = null;
+            }
 
-            long tScanEnd = System.nanoTime();
 
-            if (collected == 0) {
-                // Nothing ready
+            if (staged.isEmpty()) {
+                // Nothing ready; force next scan to seekToFirst() to avoid any missed-window starvation
+                // scanStartKey = null;
+                return; // nothing ready
+            }
+
+            // Bulk delete staged keys before exposing them via readyCache
+            try (org.rocksdb.WriteBatch batch = new org.rocksdb.WriteBatch()) {
+                for (CacheEntry<T> e : staged) {
+                    batch.delete(e.key);
+                }
+                db.write(writeOpts, batch);
+            } catch (org.rocksdb.RocksDBException e) {
+                // On delete failure, do not populate cache to prevent duplicates
                 return;
             }
 
-            long tWriteStart = System.nanoTime();
-            db.write(wo, wb);
-            long tWriteEnd = System.nanoTime();
-
-            // Debug timings: seek, scan+deserialize, delete(commit)
-            long seekMs = tSeekAccum / 1_000_000;
-            long scanMs = (tScanEnd - tScanStart) / 1_000_000;
-            long delMs = (tWriteEnd - tWriteStart) / 1_000_000;
-//            System.out.println("[rocksqueue] group=" + group +
-//                    " batchItems=" + collected +
-//                    " seekMs=" + seekMs +
-//                    " scanMs=" + scanMs +
-//                    " deleteMs=" + delMs);
-
-            // Advance rolling cursor to successor of the last processed key
-            scanStartKey = lexicographicSuccessor(lastKeyProcessed);
-        } catch (RocksDBException e) {
-            // On failure, clear cache to avoid duplicates and do NOT advance lastKey
-            readyCache.clear();
-            throw new RuntimeException("dequeue batch delete failed", e);
+            for (CacheEntry<T> e : staged) {
+                readyCache.addLast(e);
+            }
+            //   scanStartKey = lastKeyProcessed;
         }
     }
 
