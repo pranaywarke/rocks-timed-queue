@@ -10,8 +10,8 @@ A minimal, high-performance, time-based FIFO queue built on RocksDB.
 RocksQueue provides a persistent, time-based FIFO queue with the following key features:
 
 - **Time-based scheduling**: Enqueue items for execution at specific timestamps
-- **High performance**: Optimized batch operations and memory-mapped caching
-- **Persistence**: Built on RocksDB for durability and crash recovery
+- **High performance**: Optimized batch operations and intelligent in-memory caching
+- **Persistence**: Built on RocksDB with graceful shutdown recovery (see limitations below)
 - **Isolation**: Per-queue-group isolation with separate RocksDB instances
 - **Thread-safe**: Concurrent producers with serialized dequeue per group
 - **Simple API**: Clean interface that abstracts RocksDB complexity
@@ -111,6 +111,34 @@ Run the included benchmark:
 - **Serialized Dequeue**: Per-group dequeue operations are serialized to prevent duplicates
 - **Process Isolation**: Java-level synchronization within single JVM
 - **Multi-process**: Requires additional coordination for at-most-once delivery
+
+## ⚠️ Performance vs. Durability Trade-off
+
+**Design Choice**: RocksQueue prioritizes throughput over absolute durability:
+
+### **Data Loss Risk**
+- **In-memory cache**: Ready items are moved from RocksDB to in-memory `ArrayDeque`
+- **Vulnerability window**: Items deleted from RocksDB before being cached in memory
+- **Bad shutdown scenarios**: Process crash, `SIGKILL`, power failure, or JVM crash
+- **Potential loss**: Up to `dequeueBatchSize` items (default: 2000) per crash
+
+### **Performance Rationale**
+- **Tested alternatives**: Memory-mapped durable cache implementation showed significant throughput degradation
+- **Conscious trade-off**: Chose high performance over absolute durability for target use cases
+- **Benchmark results**: ArrayDeque cache maintains 100K+ ops/sec vs. substantial drops with durable alternatives
+
+### **Mitigation Strategies**
+- **Graceful shutdown**: `close()` method restores cached items back to RocksDB
+- **Reduce batch size**: Lower `dequeueBatchSize` to minimize exposure (trades throughput for safety)
+- **Idempotent consumers**: Design consumers to handle potential message loss
+- **External durability**: Consider upstream message persistence for critical data
+- **Monitoring**: Track cache restoration events and unexpected shutdowns
+
+### **Use Cases**
+- ✅ **Excellent for**: High-throughput event processing, analytics pipelines, background tasks
+- ✅ **Good for**: Development, testing, non-critical real-time processing
+- ⚠️ **Consider alternatives**: Financial transactions, critical notifications, audit logs
+- 💡 **Hybrid approach**: Use for high-volume processing with critical subset persisted elsewhere
 
 ## Architecture
 

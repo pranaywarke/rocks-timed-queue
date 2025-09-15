@@ -39,7 +39,7 @@ class ClockBehaviorTest {
     private void waitUntilNotEmpty(RocksTimeQueue<String> q, long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            if (!q.isEmptyApproximate()) return;
+            if ((q.sizeApproximate()!=0)) return;
             Thread.sleep(10);
         }
     }

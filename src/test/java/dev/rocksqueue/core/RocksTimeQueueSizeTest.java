@@ -49,18 +49,6 @@ class RocksTimeQueueSizeTest {
         }
     }
 
-    @Test
-    void sizeApproximate_emptyQueue_returnsZero() {
-        assertEquals(0, queue.sizeApproximate());
-        assertTrue(queue.isEmptyApproximate());
-    }
-
-    @Test
-    void sizeApproximate_singleItem_returnsOne() {
-        queue.enqueue("item1", now);
-        assertEquals(1, queue.sizeApproximate());
-        assertFalse(queue.isEmptyApproximate());
-    }
 
     @Test
     void sizeApproximate_multipleItems_returnsCorrectCount() {
@@ -88,7 +76,6 @@ class RocksTimeQueueSizeTest {
 
         assertNotNull(queue.dequeue());
         assertEquals(0, queue.sizeApproximate());
-        assertTrue(queue.isEmptyApproximate());
     }
 
     @Test
@@ -118,7 +105,6 @@ class RocksTimeQueueSizeTest {
         }
 
         assertEquals(0, queue.sizeApproximate());
-        assertTrue(queue.isEmptyApproximate());
     }
 
     @Test
@@ -148,7 +134,6 @@ class RocksTimeQueueSizeTest {
         }
 
         assertEquals(0, queue.sizeApproximate());
-        assertTrue(queue.isEmptyApproximate());
     }
 
     @Test
@@ -177,7 +162,6 @@ class RocksTimeQueueSizeTest {
 
         assertNotNull(queue.dequeue()); // Remove item4
         assertEquals(0, queue.sizeApproximate());
-        assertTrue(queue.isEmptyApproximate());
     }
 
     @Test
@@ -209,7 +193,6 @@ class RocksTimeQueueSizeTest {
 
         queue.close();
         assertEquals(-1, queue.sizeApproximate());
-        assertTrue(queue.isEmptyApproximate()); // isEmptyApproximate should handle -1 correctly
     }
 
     @Test
@@ -238,6 +221,5 @@ class RocksTimeQueueSizeTest {
         }
 
         assertEquals(0, queue.sizeApproximate());
-        assertTrue(queue.isEmptyApproximate());
     }
 }

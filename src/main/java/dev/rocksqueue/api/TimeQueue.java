@@ -28,8 +28,6 @@ public interface TimeQueue<T> extends AutoCloseable {
 
     long sizeApproximate();
 
-    boolean isEmptyApproximate();
-
     @Override
     void close();
 }

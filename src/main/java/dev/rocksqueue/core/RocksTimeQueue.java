@@ -385,9 +385,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             
             CacheEntry<T> next = readyCache.pollFirst();
             if (next == null) {
-                if (logger.isTraceEnabled()) {
-                    logger.trace("No items available after cache refill for group '{}'", group);
-                }
+                logger.trace("No items available after cache refill for group '{}'", group);
                 return null;
             }
             
@@ -489,10 +487,8 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             
             long totalSize = rocksDbSize + cacheSize;
             
-            if (logger.isTraceEnabled()) {
-                logger.trace("Approximate size for group '{}': {} (RocksDB: {}, Cache: {})", 
-                           group, totalSize, rocksDbSize, cacheSize);
-            }
+            logger.trace("Approximate size for group '{}': {} (RocksDB: {}, Cache: {})", 
+                       group, totalSize, rocksDbSize, cacheSize);
             
             return totalSize;
         } catch (Exception e) {
@@ -501,21 +497,6 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         }
     }
 
-    @Override
-    public boolean isEmptyApproximate() {
-        long s = sizeApproximate();
-        if (s >= 0) return s == 0;
-        // Fallback: quick iterator check
-        try (RocksIterator it = db.newIterator(readOptsNoCache)) {
-            it.seekToFirst();
-            while (it.isValid()) {
-                byte[] key = it.key();
-                if (key != null && key.length == 16) return false;
-                it.next();
-            }
-            return true;
-        }
-    }
 
     /**
      * Closes this queue and releases all associated resources.
@@ -741,18 +722,14 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 it.seek(scanStartKey);
                 usedRollingCursor = true;
                 
-                if (logger.isTraceEnabled()) {
-                    logger.trace("Using rolling cursor for cache refill in group '{}', iterator valid: {}", 
-                               group, it.isValid());
-                }
+                logger.trace("Using rolling cursor for cache refill in group '{}', iterator valid: {}", 
+                           group, it.isValid());
             } else {
                 it.seekToFirst();
                 resetIteratorAt.set(false);
                 
-                if (logger.isTraceEnabled()) {
-                    logger.trace("Using full scan for cache refill in group '{}', iterator valid: {}", 
-                               group, it.isValid());
-                }
+                logger.trace("Using full scan for cache refill in group '{}', iterator valid: {}", 
+                           group, it.isValid());
             }
 
             java.util.ArrayList<CacheEntry<T>> staged = new java.util.ArrayList<>(batchSize);
@@ -760,10 +737,8 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             while (it.isValid() && collected < batchSize) {
                 byte[] k = it.key();
                 if (k == null || k.length != BINARY_KEY_LENGTH) {
-                    if (logger.isTraceEnabled()) {
-                        logger.trace("Skipping invalid key of length {} during cache refill for group '{}'", 
-                                   k != null ? k.length : 0, group);
-                    }
+                    logger.trace("Skipping invalid key of length {} during cache refill for group '{}'", 
+                               k != null ? k.length : 0, group);
                     it.next();
                     continue;
                 }
@@ -780,7 +755,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 try {
                     byte[] keyCopy = Arrays.copyOf(k, k.length);
                     byte[] valCopy = Arrays.copyOf(it.value(), it.value().length);
-                    T item = serializer.deserialize(valCopy, type);
+                    T item = serializer.deserialize(valCopy, type); // TODO deserialize outside of lock
                     staged.add(new CacheEntry<>(keyCopy, valCopy, item));
                     collected++;
                     
@@ -800,14 +775,10 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             // Update rolling cursor based on iterator state
             if (it.isValid()) {
                 scanStartKey = Arrays.copyOf(it.key(), it.key().length);
-                if (logger.isTraceEnabled()) {
-                    logger.trace("Updated rolling cursor to next position for group '{}'", group);
-                }
+                logger.trace("Updated rolling cursor to next position for group '{}'", group);
             } else {
                 scanStartKey = null;
-                if (logger.isTraceEnabled()) {
-                    logger.trace("Reset rolling cursor (iterator exhausted) for group '{}'", group);
-                }
+                logger.trace("Reset rolling cursor (iterator exhausted) for group '{}'", group);
             }
 
             if (staged.isEmpty()) {
