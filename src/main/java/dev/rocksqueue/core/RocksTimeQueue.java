@@ -11,6 +11,7 @@ import org.slf4j.MDC;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -116,13 +117,85 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         }
     }
 
+    /**
+     * Raw cache entry holding serialized data before deserialization.
+     * Used to minimize time spent in synchronized blocks during cache refill.
+     * 
+     * @param key       16-byte encoded key (timestamp + sequence number)
+     * @param value     serialized payload
+     * @param timestamp decoded timestamp for logging/debugging
+     */
+    private record RawCacheEntry(byte[] key, byte[] value, long timestamp) {
+        public RawCacheEntry {
+            Objects.requireNonNull(key, "key cannot be null");
+            Objects.requireNonNull(value, "value cannot be null");
+            if (key.length != BINARY_KEY_LENGTH) {
+                throw new IllegalArgumentException("Key must be exactly " + BINARY_KEY_LENGTH + " bytes, got " + key.length);
+            }
+        }
+    }
+
     private static String sanitize(String name) {
         return name.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
     /**
+     * Recovers the insertion counter value, preferring persisted metadata over data scanning.
+     * This optimization tries O(1) metadata read before falling back to O(n) data scan.
+     * 
+     * @param db the RocksDB instance to read from
+     * @return the recovered counter value, or 0 if no valid data exists
+     */
+    private long recoverCounterValue(RocksDB db) {
+        // First try: Read persisted counter metadata (O(1) - fast)
+        try {
+            byte[] metaBytes = db.get(META_INSERTION_COUNTER_KEY.getBytes(StandardCharsets.UTF_8));
+            if (metaBytes != null && metaBytes.length == 8) {
+                long metaValue = ByteBuffer.wrap(metaBytes).order(ByteOrder.BIG_ENDIAN).getLong();
+                logger.debug("Recovered insertion counter {} from metadata for group '{}'", metaValue, group);
+                
+                // Verify metadata is reasonable by checking if any data exists beyond this counter
+                if (hasDataBeyondCounter(db, metaValue)) {
+                    logger.warn("Metadata counter {} appears stale, falling back to data scan for group '{}'", 
+                              metaValue, group);
+                    return recoverCounterFromData(db);
+                }
+                
+                return metaValue;
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to read counter metadata for group '{}', falling back to data scan: {}", 
+                       group, e.getMessage());
+        }
+        
+        // Fallback: Scan data to recover counter (O(n) - slower but reliable)
+        return recoverCounterFromData(db);
+    }
+    
+    /**
+     * Checks if there's any data with sequence numbers beyond the given counter value.
+     * This helps detect stale metadata counters.
+     */
+    private boolean hasDataBeyondCounter(RocksDB db, long counterValue) {
+        try (RocksIterator it = db.newIterator()) {
+            it.seekToLast();
+            if (it.isValid()) {
+                byte[] key = it.key();
+                if (key != null && key.length == BINARY_KEY_LENGTH) {
+                    ByteBuffer buf = ByteBuffer.wrap(key).order(ByteOrder.BIG_ENDIAN);
+                    long lastSeq = buf.getLong(8);
+                    return lastSeq > counterValue;
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to check data beyond counter for group '{}': {}", group, e.getMessage());
+        }
+        return false;
+    }
+
+    /**
      * Recovers the insertion counter value from existing data in RocksDB.
-     * This is used during initialization to ensure counter continuity after restarts.
+     * This is used as a fallback when metadata is unavailable or stale.
      * 
      * @param db the RocksDB instance to scan
      * @return the highest sequence number found, or 0 if no valid keys exist
@@ -218,13 +291,15 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             
             logger.debug("Opening RocksDB at path: {}", path);
             
-            Options options = new Options()
+            // Use try-with-resources to ensure Options is properly closed
+            try (Options options = new Options()
                     .setCreateIfMissing(true)
                     .setCompressionType(config.getCompressionType())
                     .setWriteBufferSize((long) config.getWriteBufferSizeMB() * 1024 * 1024)
-                    .setMaxWriteBufferNumber(config.getMaxWriteBufferNumber());
+                    .setMaxWriteBufferNumber(config.getMaxWriteBufferNumber())) {
                     
-            this.db = RocksDB.open(options, path);
+                this.db = RocksDB.open(options, path);
+            }
             
             logger.info("Successfully opened RocksDB for group '{}' at path: {}", group, path);
         } catch (Exception e) {
@@ -254,7 +329,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         try {
             String counterPath = config.getBasePath() + File.separator + sanitize(group) + File.separator + COUNTER_FILE_NAME;
             MappedLongCounter mapped = MappedLongCounter.open(counterPath);
-            long fromData = recoverCounterFromData(db);
+            long fromData = recoverCounterValue(db);
             
             if (fromData > mapped.get()) {
                 logger.info("Counter recovery: updating from {} to {} for group '{}'", mapped.get(), fromData, group);
@@ -359,8 +434,8 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             return null;
         }
         
+        // First, try to get from existing cache (fast path)
         synchronized (dequeueLock) {
-            // Try cache first
             CacheEntry<T> cached = readyCache.pollFirst();
             if (cached != null) {
                 long hits = cacheHits.incrementAndGet();
@@ -373,19 +448,47 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 
                 return cached.item;
             }
-            
-            // Cache miss - refill from DB
-            long misses = cacheMisses.incrementAndGet();
-            
-            if (logger.isDebugEnabled()) {
-                logger.debug("Cache miss #{}: refilling cache for group '{}'", misses, group);
+        }
+        
+        // Cache miss - need to refill, but do deserialization outside sync block
+        long misses = cacheMisses.incrementAndGet();
+        
+        if (logger.isDebugEnabled()) {
+            logger.debug("Cache miss #{}: refilling cache for group '{}'", misses, group);
+        }
+        
+        // Collect raw entries (inside sync block - minimal time)
+        java.util.List<RawCacheEntry> rawEntries;
+        synchronized (dequeueLock) {
+            rawEntries = collectRawReadyEntries(Math.max(1, config.getDequeueBatchSize()));
+            if (rawEntries.isEmpty()) {
+                logger.trace("No items available after cache refill for group '{}'", group);
+                return null;
             }
-            
-            refillReadyCache(Math.max(1, config.getDequeueBatchSize()));
+        }
+        
+        // Deserialize outside sync block (reduces contention)
+        java.util.List<CacheEntry<T>> deserializedEntries = new java.util.ArrayList<>(rawEntries.size());
+        for (RawCacheEntry rawEntry : rawEntries) {
+            try {
+                T item = serializer.deserialize(rawEntry.value(), type);
+                deserializedEntries.add(new CacheEntry<>(rawEntry.key(), rawEntry.value(), item));
+            } catch (Exception e) {
+                logger.warn("Failed to deserialize item during cache refill for group '{}': {}", 
+                          group, e.getMessage(), e);
+                // Skip this item and continue with others
+            }
+        }
+        
+        // Add deserialized entries to cache and return first item
+        synchronized (dequeueLock) {
+            for (CacheEntry<T> entry : deserializedEntries) {
+                readyCache.addLast(entry);
+            }
             
             CacheEntry<T> next = readyCache.pollFirst();
             if (next == null) {
-                logger.trace("No items available after cache refill for group '{}'", group);
+                logger.trace("No items available after deserialization for group '{}'", group);
                 return null;
             }
             
@@ -532,7 +635,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                     ByteBuffer buf = ByteBuffer.allocate(8)
                                              .order(ByteOrder.BIG_ENDIAN)
                                              .putLong(counterValue);
-                    db.put(writeOpts, META_INSERTION_COUNTER_KEY.getBytes(), buf.array());
+                    db.put(writeOpts, META_INSERTION_COUNTER_KEY.getBytes(StandardCharsets.UTF_8), buf.array());
                     
                     logger.debug("Persisted insertion counter value {} for group '{}'", counterValue, group);
                 } catch (RocksDBException e) {
@@ -590,10 +693,11 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 }
                 
                 // Log final metrics
+                double hitRatio = getCacheHitRatio();
                 logger.info("Queue closure complete for group '{}' - Final metrics: " +
-                          "enqueued={}, dequeued={}, cache hits={}, cache misses={}, hit ratio={:.2f}%, refills={}", 
+                          "enqueued={}, dequeued={}, cache hits={}, cache misses={}, hit ratio={}%, refills={}", 
                           group, totalEnqueued.get(), totalDequeued.get(), cacheHits.get(), 
-                          cacheMisses.get(), String.format("%.2f", getCacheHitRatio()), batchRefills.get());
+                          cacheMisses.get(), String.format("%.2f", hitRatio), batchRefills.get());
             }
         } finally {
             MDC.clear();
@@ -689,12 +793,141 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     }
 
     /**
+     * Collects raw ready entries without deserialization to minimize synchronized block time.
+     * This method performs the database operations and raw data collection efficiently.
+     * 
+     * @param batchSize maximum number of items to collect
+     * @return list of raw cache entries ready for deserialization
+     */
+    private java.util.List<RawCacheEntry> collectRawReadyEntries(int batchSize) {
+        final long now = clock.millis();
+        byte[] ub = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
+        
+        long refillCount = batchRefills.incrementAndGet();
+        
+        if (logger.isDebugEnabled()) {
+            logger.debug("Starting raw entry collection #{} with batchSize={} for group '{}' (now={})", 
+                       refillCount, batchSize, group, Instant.ofEpochMilli(now));
+        }
+
+        java.util.List<RawCacheEntry> rawEntries = new java.util.ArrayList<>(batchSize);
+
+        try (Slice ubSlice = new Slice(ub);
+             ReadOptions ro = new ReadOptions()
+                     .setVerifyChecksums(false)
+                     .setFillCache(false)
+                     .setReadaheadSize(config.getReadaheadSizeBytes())
+                     .setIterateUpperBound(ubSlice);
+             RocksIterator it = db.newIterator(ro)) {
+
+            int collected = 0;
+            boolean usedRollingCursor = false;
+            
+            // Seek using rolling cursor optimization or fallback to head
+            if (scanStartKey != null && !resetIteratorAt.get()) {
+                it.seek(scanStartKey);
+                usedRollingCursor = true;
+                
+                logger.trace("Using rolling cursor for raw entry collection in group '{}', iterator valid: {}", 
+                           group, it.isValid());
+            } else {
+                it.seekToFirst();
+                resetIteratorAt.set(false);
+                
+                logger.trace("Using full scan for raw entry collection in group '{}', iterator valid: {}", 
+                           group, it.isValid());
+            }
+
+            java.util.ArrayList<RawCacheEntry> staged = new java.util.ArrayList<>(batchSize);
+
+            while (it.isValid() && collected < batchSize) {
+                byte[] k = it.key();
+                if (k == null || k.length != BINARY_KEY_LENGTH) {
+                    logger.trace("Skipping invalid key of length {} during raw entry collection for group '{}'", 
+                               k != null ? k.length : 0, group);
+                    it.next();
+                    continue;
+                }
+
+                long ts = BinaryKeyEncoder.decodeTimestamp(k);
+                if (ts > now) {
+                    if (logger.isTraceEnabled()) {
+                        logger.trace("Reached future item at {} during raw entry collection for group '{}', stopping collection", 
+                                   Instant.ofEpochMilli(ts), group);
+                    }
+                    break; // safety; upper bound applied via iterateUpperBound
+                }
+
+                // Copy raw bytes without deserialization (fast, no lock contention)
+                byte[] keyCopy = Arrays.copyOf(k, k.length);
+                byte[] valCopy = Arrays.copyOf(it.value(), it.value().length);
+                staged.add(new RawCacheEntry(keyCopy, valCopy, ts));
+                collected++;
+                
+                if (logger.isTraceEnabled()) {
+                    logger.trace("Collected raw entry #{} with timestamp {} for group '{}'", 
+                               collected, Instant.ofEpochMilli(ts), group);
+                }
+                
+                it.next();
+            }
+            
+            // Update rolling cursor based on iterator state
+            if (it.isValid()) {
+                scanStartKey = Arrays.copyOf(it.key(), it.key().length);
+                logger.trace("Updated rolling cursor to next position for group '{}'", group);
+            } else {
+                scanStartKey = null;
+                logger.trace("Reset rolling cursor (iterator exhausted) for group '{}'", group);
+            }
+
+            if (staged.isEmpty()) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Raw entry collection #{} found no ready items for group '{}' (used rolling cursor: {})", 
+                               refillCount, group, usedRollingCursor);
+                }
+                return rawEntries; // empty list
+            }
+
+            // Bulk delete staged keys before returning raw entries
+            try (org.rocksdb.WriteBatch batch = new org.rocksdb.WriteBatch()) {
+                for (RawCacheEntry e : staged) {
+                    batch.delete(e.key());
+                }
+                db.write(writeOpts, batch);
+            } catch (RocksDBException e) {
+                logger.error("Failed to delete staged keys during raw entry collection for group '{}': {}", 
+                           group, e.getMessage(), e);
+                // On delete failure, return empty list to prevent duplicates
+                return rawEntries; // empty list
+            }
+
+            // Successfully deleted from DB, return raw entries for deserialization
+            rawEntries.addAll(staged);
+            
+            if (logger.isDebugEnabled()) {
+                logger.debug("Raw entry collection #{} completed: collected {} items for group '{}' (used rolling cursor: {})", 
+                           refillCount, staged.size(), group, usedRollingCursor);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Unexpected error during raw entry collection for group '{}': {}", group, e.getMessage(), e);
+            // Reset rolling cursor on unexpected errors to ensure recovery
+            scanStartKey = null;
+        }
+        
+        return rawEntries;
+    }
+
+    /**
      * Refills the ready cache with items that are eligible for dequeue.
      * This method is the core of the queue's performance optimization, using a rolling cursor
      * to avoid expensive full scans and batch processing for efficiency.
      * 
      * @param batchSize maximum number of items to load into cache
+     * @deprecated Use collectRawReadyEntries for better performance with reduced lock contention
      */
+    @Deprecated
     private void refillReadyCache(int batchSize) {
         final long now = clock.millis();
         byte[] ub = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
@@ -732,7 +965,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                            group, it.isValid());
             }
 
-            java.util.ArrayList<CacheEntry<T>> staged = new java.util.ArrayList<>(batchSize);
+            java.util.ArrayList<RawCacheEntry> staged = new java.util.ArrayList<>(batchSize);
 
             while (it.isValid() && collected < batchSize) {
                 byte[] k = it.key();
@@ -752,21 +985,15 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                     break; // safety; upper bound applied via iterateUpperBound
                 }
 
-                try {
-                    byte[] keyCopy = Arrays.copyOf(k, k.length);
-                    byte[] valCopy = Arrays.copyOf(it.value(), it.value().length);
-                    T item = serializer.deserialize(valCopy, type); // TODO deserialize outside of lock
-                    staged.add(new CacheEntry<>(keyCopy, valCopy, item));
-                    collected++;
-                    
-                    if (logger.isTraceEnabled()) {
-                        logger.trace("Collected item #{} with timestamp {} for group '{}'", 
-                                   collected, Instant.ofEpochMilli(ts), group);
-                    }
-                } catch (Exception e) {
-                    logger.warn("Failed to deserialize item during cache refill for group '{}': {}", 
-                              group, e.getMessage(), e);
-                    // Continue with next item
+                // Copy raw bytes without deserialization (fast, no lock contention)
+                byte[] keyCopy = Arrays.copyOf(k, k.length);
+                byte[] valCopy = Arrays.copyOf(it.value(), it.value().length);
+                staged.add(new RawCacheEntry(keyCopy, valCopy, ts));
+                collected++;
+                
+                if (logger.isTraceEnabled()) {
+                    logger.trace("Collected item #{} with timestamp {} for group '{}'", 
+                               collected, Instant.ofEpochMilli(ts), group);
                 }
                 
                 it.next();
@@ -791,8 +1018,8 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 
             // Bulk delete staged keys before exposing them via readyCache
             try (org.rocksdb.WriteBatch batch = new org.rocksdb.WriteBatch()) {
-                for (CacheEntry<T> e : staged) {
-                    batch.delete(e.key);
+                for (RawCacheEntry e : staged) {
+                    batch.delete(e.key());
                 }
                 db.write(writeOpts, batch);
             } catch (RocksDBException e) {
@@ -802,9 +1029,18 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 return;
             }
 
-            // Successfully deleted from DB, now populate cache
-            for (CacheEntry<T> e : staged) {
-                readyCache.addLast(e);
+            // Successfully deleted from DB, now deserialize and populate cache outside synchronized block
+            // This reduces lock contention by moving expensive deserialization out of critical section
+            for (RawCacheEntry rawEntry : staged) {
+                try {
+                    T item = serializer.deserialize(rawEntry.value(), type);
+                    CacheEntry<T> cacheEntry = new CacheEntry<>(rawEntry.key(), rawEntry.value(), item);
+                    readyCache.addLast(cacheEntry);
+                } catch (Exception e) {
+                    logger.warn("Failed to deserialize item during cache population for group '{}': {}", 
+                              group, e.getMessage(), e);
+                    // Skip this item and continue with others
+                }
             }
             
             if (logger.isDebugEnabled()) {

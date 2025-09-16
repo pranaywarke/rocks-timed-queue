@@ -68,7 +68,8 @@ class QueueThroughputSmokeTest {
                 .setDequeueBatchSize(batch);
         client = new QueueClient(cfg);
 
-        TimeQueue<String> q = client.getQueue("tp", String.class, new Utf8StringSerializer());
+        client.registerQueue("tp", String.class, new Utf8StringSerializer());
+        TimeQueue<String> q = client.getQueue("tp");
 
         long now = System.currentTimeMillis();
         for (int i = 0; i < n; i++) {

@@ -48,7 +48,8 @@ class ShutdownRestoreTest {
                 .setSyncWrites(false)
                 .setDequeueBatchSize(2000);
         client = new QueueClient(cfg);
-        queue = client.getQueue(group, String.class, new JsonSerializer<>());
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        queue = client.getQueue(group);
 
         long ts = System.currentTimeMillis();
         int n = 10;
@@ -69,7 +70,8 @@ class ShutdownRestoreTest {
 
         // Restart fresh client/queue
         client = new QueueClient(new QueueConfig().setBasePath(tmp.toString()));
-        queue = client.getQueue(group, String.class, new JsonSerializer<>());
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        queue = client.getQueue(group);
 
         // Dequeue remaining; should see m1..m9 in order
         List<String> got = new ArrayList<>();

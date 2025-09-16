@@ -48,7 +48,8 @@ public class QueueConcurrencyTest {
     void multiThreadedDequeue_hasNoDuplicates_andGetsAll() throws Exception {
         initClient();
         String group = "concurrency-group";
-        TimeQueue<String> q = client.getQueue(group, String.class, new JsonSerializer<>());
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        TimeQueue<String> q = client.getQueue(group);
 
         int total = 2000;
         long now = System.currentTimeMillis();

@@ -41,8 +41,10 @@ class QueueIntegrationTest {
                 .setDisableWAL(false);
 
         client = new QueueClient(cfg);
-        TimeQueue<String> q1 = client.getQueue("g1", String.class, new JsonSerializer<>());
-        TimeQueue<String> q2 = client.getQueue("g2", String.class, new JsonSerializer<>());
+        client.registerQueue("g1", String.class, new JsonSerializer<>());
+        client.registerQueue("g2", String.class, new JsonSerializer<>());
+        TimeQueue<String> q1 = client.getQueue("g1");
+        TimeQueue<String> q2 = client.getQueue("g2");
 
         long ts = System.currentTimeMillis();
         q1.enqueue("a", ts);
@@ -64,7 +66,8 @@ class QueueIntegrationTest {
         tmp = Files.createTempDirectory("rocksqueue-test-");
         QueueConfig cfg = new QueueConfig().setBasePath(tmp.toString());
         client = new QueueClient(cfg);
-        TimeQueue<String> q = client.getQueue("g", String.class, new JsonSerializer<>());
+        client.registerQueue("g", String.class, new JsonSerializer<>());
+        TimeQueue<String> q = client.getQueue("g");
 
         long future = System.currentTimeMillis() + 200;
         q.enqueue("x", future);

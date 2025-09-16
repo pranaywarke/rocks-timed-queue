@@ -48,7 +48,8 @@ class CrashRecoveryTest {
                 .setDisableWAL(false)
                 .setSyncWrites(false);
         client = new QueueClient(cfg1);
-        TimeQueue<String> q = client.getQueue(group, String.class, new JsonSerializer<>());
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        TimeQueue<String> q = client.getQueue(group);
         q.enqueue("a", ts);
         q.enqueue("b", ts);
         q.enqueue("c", ts);
@@ -61,7 +62,8 @@ class CrashRecoveryTest {
         // Restart: client should recover counter from last key (data) not the stale meta
         QueueConfig cfg2 = new QueueConfig().setBasePath(tmp.toString());
         client = new QueueClient(cfg2);
-        TimeQueue<String> q2 = client.getQueue(group, String.class, new JsonSerializer<>());
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        TimeQueue<String> q2 = client.getQueue(group);
 
         // Enqueue one more item at same timestamp; if counter recovery failed, this would come first
         q2.enqueue("d", ts);
@@ -83,7 +85,8 @@ class CrashRecoveryTest {
         // First run
         QueueConfig cfg1 = new QueueConfig().setBasePath(tmp.toString());
         client = new QueueClient(cfg1);
-        TimeQueue<String> q = client.getQueue(group, String.class, new JsonSerializer<>());
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        TimeQueue<String> q = client.getQueue(group);
         q.enqueue("x", ts);
         q.enqueue("y", ts);
         client.close();
@@ -95,7 +98,8 @@ class CrashRecoveryTest {
         // Restart
         QueueConfig cfg2 = new QueueConfig().setBasePath(tmp.toString());
         client = new QueueClient(cfg2);
-        TimeQueue<String> q2 = client.getQueue(group, String.class, new JsonSerializer<>());
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        TimeQueue<String> q2 = client.getQueue(group);
         q2.enqueue("z", ts);
 
         // Expect x,y,z order

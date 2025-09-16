@@ -41,8 +41,13 @@ class QueueClientTest {
         QueueConfig cfg = new QueueConfig().setBasePath(tmp.toString());
         client = new QueueClient(cfg);
 
-        TimeQueue<String> q1 = client.getQueue("g1", String.class, new JsonSerializer<>());
-        TimeQueue<String> q2 = client.getQueue("g2", String.class, new JsonSerializer<>());
+        // Register queues first
+        client.registerQueue("g1", String.class, new JsonSerializer<>());
+        client.registerQueue("g2", String.class, new JsonSerializer<>());
+        
+        // Get queue instances
+        TimeQueue<String> q1 = client.getQueue("g1");
+        TimeQueue<String> q2 = client.getQueue("g2");
 
         long ts = System.currentTimeMillis();
         q1.enqueue("a", ts);
@@ -65,7 +70,9 @@ class QueueClientTest {
         client = new QueueClient(cfg);
 
         String ugly = "my/group?name*";
-        TimeQueue<String> q = client.getQueue(ugly, String.class, new JsonSerializer<>());
+        // Register queue first
+        client.registerQueue(ugly, String.class, new JsonSerializer<>());
+        TimeQueue<String> q = client.getQueue(ugly);
         long ts = System.currentTimeMillis();
         q.enqueue("x", ts);
         assertEquals("x", q.dequeue());
@@ -82,8 +89,10 @@ class QueueClientTest {
         client = new QueueClient(cfg);
 
         String group = "concurrent";
-        TimeQueue<String> q1 = client.getQueue(group, String.class, new JsonSerializer<>());
-        TimeQueue<String> q2 = client.getQueue(group, String.class, new JsonSerializer<>());
+        // Register queue first
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        TimeQueue<String> q1 = client.getQueue(group);
+        TimeQueue<String> q2 = client.getQueue(group);
 
         int total = 500;
         long now = System.currentTimeMillis();
@@ -118,7 +127,9 @@ class QueueClientTest {
         String group = "gmeta";
         QueueConfig cfg = new QueueConfig().setBasePath(tmp.toString());
         client = new QueueClient(cfg);
-        TimeQueue<String> q = client.getQueue(group, String.class, new JsonSerializer<>());
+        // Register queue first
+        client.registerQueue(group, String.class, new JsonSerializer<>());
+        TimeQueue<String> q = client.getQueue(group);
 
         long ts = System.currentTimeMillis();
         q.enqueue("a", ts);

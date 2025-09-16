@@ -66,7 +66,8 @@ class ConcurrentEnqueueDequeueStressTest {
         client = new QueueClient(cfg);
 
         final String group = "concurrent-elig";
-        TimeQueue<String> q = client.getQueue(group, String.class, new Utf8StringSerializer());
+        client.registerQueue(group, String.class, new Utf8StringSerializer());
+        TimeQueue<String> q = client.getQueue(group);
 
         // Track first-seen times and expected executeAt for each id
         ConcurrentHashMap<Integer, Long> firstSeenAt = new ConcurrentHashMap<>(total * 2);
@@ -212,7 +213,8 @@ class ConcurrentEnqueueDequeueStressTest {
         client = new QueueClient(cfg);
 
         final String group = "concurrent-zero";
-        TimeQueue<String> q = client.getQueue(group, String.class, new Utf8StringSerializer());
+        client.registerQueue(group, String.class, new Utf8StringSerializer());
+        TimeQueue<String> q = client.getQueue(group);
 
         ConcurrentHashMap<Integer, Boolean> seen = new ConcurrentHashMap<>(total * 2);
         ExecutorService exec = Executors.newFixedThreadPool(producers + 1);
