@@ -56,7 +56,7 @@ class QueueThroughputSmokeTest {
         boolean disableWAL = getBoolProp("q.disableWAL", false);
         boolean syncWrites = getBoolProp("q.syncWrites", false);
         int batch = getBatchProp("q.batch", 20000);
-        int payloadBytes = getIntProp("q.payloadBytes", 512);
+        int payloadBytes = getIntProp("q.payloadBytes", 5120);
 
         String payload = makeAsciiPayload(payloadBytes);
 
