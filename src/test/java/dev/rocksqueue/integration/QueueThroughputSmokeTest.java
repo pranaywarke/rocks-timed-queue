@@ -2,6 +2,7 @@ package dev.rocksqueue.integration;
 
 import dev.rocksqueue.api.TimeQueue;
 import dev.rocksqueue.client.QueueClient;
+import dev.rocksqueue.config.CacheType;
 import dev.rocksqueue.config.QueueConfig;
 import dev.rocksqueue.ser.Utf8StringSerializer;
 import org.junit.jupiter.api.AfterEach;
@@ -56,7 +57,7 @@ class QueueThroughputSmokeTest {
         boolean disableWAL = getBoolProp("q.disableWAL", false);
         boolean syncWrites = getBoolProp("q.syncWrites", false);
         int batch = getBatchProp("q.batch", 20000);
-        int payloadBytes = getIntProp("q.payloadBytes", 5120);
+        int payloadBytes = getIntProp("q.payloadBytes", 5024);
 
         String payload = makeAsciiPayload(payloadBytes);
 
@@ -65,6 +66,9 @@ class QueueThroughputSmokeTest {
                 .setBasePath(tmp.toString())
                 .setDisableWAL(disableWAL)
                 .setSyncWrites(syncWrites)
+                .setCacheType(CacheType.IN_MEMORY)
+                .   setCacheFileSizeMB(1024)
+                .setCacheForceOnWrite(false)
                 .setDequeueBatchSize(batch);
         client = new QueueClient(cfg);
 

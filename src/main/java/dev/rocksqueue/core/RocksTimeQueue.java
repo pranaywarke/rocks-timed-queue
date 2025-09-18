@@ -2,6 +2,10 @@ package dev.rocksqueue.core;
 
 import dev.rocksqueue.api.TimeQueue;
 import dev.rocksqueue.config.QueueConfig;
+import dev.rocksqueue.config.CacheType;
+import dev.rocksqueue.cache.ReadyCache;
+import dev.rocksqueue.cache.InMemoryReadyCache;
+import dev.rocksqueue.cache.MemoryMappedReadyCache;
 import dev.rocksqueue.ser.Serializer;
 import org.rocksdb.*;
 import org.slf4j.Logger;
@@ -14,9 +18,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayDeque;
 import java.util.Arrays;
-import java.util.Deque;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -86,7 +88,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     private final ReadOptions readOptsNoCache;
     private volatile long lastClock = 0;
     private final AtomicBoolean resetRollingIterator = new AtomicBoolean(false);
-    private final Deque<RawCacheEntry> readyCache = new ArrayDeque<>();
+    private final ReadyCache readyCache;
     private volatile byte[] rollingIteratorStartTimeStamp = null;
 
 
@@ -229,6 +231,42 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             MDC.clear();
         }
 
+        // Initialize ready cache implementation based on configuration
+        ReadyCache rc;
+        try {
+            if (config.getCacheType() == CacheType.MEMORY_MAPPED) {
+                // Validate configuration before creating durable cache
+                int minMb = Math.max(1, config.getCacheMinFileSizeMB());
+                if (config.getCacheFileSizeMB() < minMb) {
+                    throw new IllegalArgumentException("cacheFileSizeMB (" + config.getCacheFileSizeMB() + ") is less than cacheMinFileSizeMB (" + minMb + ")");
+                }
+                int maxRecord = config.getCacheMaxRecordBytes();
+                if (maxRecord <= 0) {
+                    throw new IllegalArgumentException("cacheMaxRecordBytes must be > 0");
+                }
+                // Per-record bytes = 20 (lens+ts+crc) + 16 key + valueLen
+                long perRecordBytes = 20L + 16L + (long) maxRecord;
+                long minBytes = 64L /*header*/ + perRecordBytes + 4L /*sentinel slack*/;
+                long configuredBytes = (long) config.getCacheFileSizeMB() * 1024 * 1024;
+                if (configuredBytes < minBytes) {
+                    throw new IllegalArgumentException("cacheFileSizeMB too small for maxRecordBytes: need at least " + ((minBytes + (1024*1024)-1)/(1024*1024)) + " MB");
+                }
+
+                String groupDir = config.getBasePath() + File.separator + sanitize(group);
+                String cacheFile = groupDir + File.separator + "cache" + File.separator + "ready.cache";
+                long fileSize = configuredBytes;
+                rc = new MemoryMappedReadyCache(cacheFile, fileSize, config.isCacheStrictCrc(), config.isCacheForceOnWrite());
+                logger.info("Initialized MemoryMappedReadyCache at {} ({} MB, maxRecordBytes={}) for group '{}'", cacheFile, config.getCacheFileSizeMB(), maxRecord, group);
+            } else {
+                rc = new InMemoryReadyCache();
+                logger.info("Initialized InMemoryReadyCache for group '{}'", group);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to initialize ready cache for group '{}': {}. Falling back to in-memory cache.", group, e.getMessage(), e);
+            rc = new InMemoryReadyCache();
+        }
+        this.readyCache = rc;
+
         logger.info("RocksTimeQueue initialization completed for group '{}'", group);
     }
 
@@ -283,6 +321,12 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             byte[] key = BinaryKeyEncoder.encode(executeAtMillis, seq);
             byte[] value = serializer.serialize(item);
 
+            // Enforce max record size (payload) limit to ensure cache capacity guarantees
+            int maxRecordBytes = config.getCacheMaxRecordBytes();
+            if (maxRecordBytes > 0 && value.length > maxRecordBytes) {
+                throw new IllegalArgumentException("Serialized item size=" + value.length + " exceeds maxRecordBytes=" + maxRecordBytes);
+            }
+
             db.put(writeOpts, key, value);
 
         } catch (RocksDBException e) {
@@ -320,19 +364,15 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 
         // Minimal critical section: poll from cache; if empty, refill and poll once
         synchronized (dequeueLock) {
-            entry = isPeek?readyCache.peekFirst():readyCache.pollFirst();
+            entry = isPeek ? readyCache.peekFirst() : readyCache.pollFirst();
             wasCacheHit = (entry != null);
 
             if (!wasCacheHit) {
-
-                java.util.List<RawCacheEntry> rawEntries = collectRawReadyEntries(Math.max(1, config.getDequeueBatchSize()));
-                if (rawEntries.isEmpty()) {
+                int filled = collectAndFillReadyCache(readyCache, Math.max(1, config.getDequeueBatchSize()));
+                if (filled == 0) {
                     return null;
                 }
-                for (RawCacheEntry e : rawEntries) {
-                    readyCache.addLast(e);
-                }
-                entry = isPeek?readyCache.peekFirst():readyCache.pollFirst();
+                entry = isPeek ? readyCache.peekFirst() : readyCache.pollFirst();
             }
         }
 
@@ -488,7 +528,17 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 }
 
                 // Clear cache and close RocksDB
-                readyCache.clear();
+                try {
+                    // clear entries first (may write header pointers)
+                    readyCache.clear();
+                } catch (Exception e) {
+                    logger.warn("Failed to clear ready cache for group '{}': {}", group, e.getMessage(), e);
+                }
+                try {
+                    readyCache.close();
+                } catch (Exception e) {
+                    logger.warn("Failed to close ready cache for group '{}': {}", group, e.getMessage(), e);
+                }
 
                 try {
                     db.close();
@@ -521,12 +571,11 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
      * @param batchSize maximum number of items to collect
      * @return list of raw cache entries ready for deserialization
      */
-    private java.util.List<RawCacheEntry> collectRawReadyEntries(int batchSize) {
+    private int collectAndFillReadyCache(ReadyCache cache, int batchSize) {
         final long now = clock.millis();
         byte[] ub = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
 
-
-        java.util.List<RawCacheEntry> rawEntries = new java.util.ArrayList<>(batchSize);
+        int collected = 0;
 
         try (Slice ubSlice = new Slice(ub);
              ReadOptions ro = new ReadOptions()
@@ -535,8 +584,6 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                      .setReadaheadSize(config.getReadaheadSizeBytes())
                      .setIterateUpperBound(ubSlice);
              RocksIterator it = db.newIterator(ro)) {
-
-            int collected = 0;
 
             if (rollingIteratorStartTimeStamp != null && !resetRollingIterator.get()) {
                 it.seek(rollingIteratorStartTimeStamp);
@@ -556,16 +603,19 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 
                 long ts = BinaryKeyEncoder.decodeTimestamp(k);
                 if (ts > now) {
-
                     break; // safety; upper bound applied via iterateUpperBound
                 }
 
-                // Copy raw bytes without deserialization (fast, no lock contention)
                 byte[] keyCopy = Arrays.copyOf(k, k.length);
                 byte[] valCopy = Arrays.copyOf(it.value(), it.value().length);
-                staged.add(new RawCacheEntry(keyCopy, valCopy, ts));
-                collected++;
+                RawCacheEntry e = new RawCacheEntry(keyCopy, valCopy, ts);
 
+                if (!cache.canFit(e)) {
+                    break; // cache cannot accept more; stop reading
+                }
+
+                staged.add(e);
+                collected++;
                 it.next();
             }
 
@@ -576,32 +626,30 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             }
 
             if (staged.isEmpty()) {
-
-                return rawEntries; // empty list
+                return 0; // nothing to delete or append
             }
 
-            // Bulk delete staged keys before returning raw entries
             try (org.rocksdb.WriteBatch batch = new org.rocksdb.WriteBatch()) {
                 for (RawCacheEntry e : staged) {
                     batch.delete(e.key());
                 }
                 db.write(writeOpts, batch);
             } catch (RocksDBException e) {
-                logger.error("Failed to delete staged keys during raw entry collection for group '{}': {}",
-                        group, e.getMessage(), e);
-                // On delete failure, return empty list to prevent duplicates
-                return rawEntries; // empty list
+                logger.error("Failed to delete staged keys during cache fill for group '{}': {}", group, e.getMessage(), e);
+                return 0; // do not append to cache to avoid duplicates
             }
 
-            rawEntries.addAll(staged);
-
+            // Only after successful deletion, append to cache
+            for (RawCacheEntry e : staged) {
+                cache.addLast(e);
+            }
 
         } catch (Exception e) {
-            logger.error("Unexpected error during raw entry collection for group '{}': {}", group, e.getMessage(), e);
+            logger.error("Unexpected error during ready cache fill for group '{}': {}", group, e.getMessage(), e);
             rollingIteratorStartTimeStamp = null;
         }
 
-        return rawEntries;
+        return collected;
     }
 
 }
