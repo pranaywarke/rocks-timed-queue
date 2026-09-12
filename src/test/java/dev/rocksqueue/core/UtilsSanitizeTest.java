@@ -25,6 +25,15 @@ class UtilsSanitizeTest {
     }
 
     @Test
+    void keepsNamesThatMerelyLookLikeDots() {
+        // Only "." and ".." are resolved by the filesystem. "..." and ".hidden" are
+        // ordinary filenames and must survive, or valid group names would be refused.
+        assertEquals("...", Utils.sanitize("..."));
+        assertEquals(".hidden", Utils.sanitize(".hidden"));
+        assertEquals("..a", Utils.sanitize("..a"));
+    }
+
+    @Test
     void rejectsBlankNames() {
         assertThrows(IllegalArgumentException.class, () -> Utils.sanitize(null));
         assertThrows(IllegalArgumentException.class, () -> Utils.sanitize(""));
