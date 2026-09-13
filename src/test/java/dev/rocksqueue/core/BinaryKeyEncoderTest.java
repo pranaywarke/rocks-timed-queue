@@ -38,4 +38,14 @@ class BinaryKeyEncoderTest {
         }
         return a.length - b.length;
     }
+    @Test
+    void readyUpperBoundIncludesTheWholeMillisecondAndNothingLater() {
+        long now = 1_700_000_000_000L;
+        byte[] bound = RocksTimeQueue.readyUpperBound(now);
+        java.util.Comparator<byte[]> lex = (a, b) -> java.util.Arrays.compareUnsigned(a, b);
+        assertTrue(lex.compare(BinaryKeyEncoder.encode(now, 0L), bound) < 0);
+        assertTrue(lex.compare(BinaryKeyEncoder.encode(now, Long.MAX_VALUE - 1), bound) < 0);
+        assertTrue(lex.compare(BinaryKeyEncoder.encode(now + 1, 0L), bound) > 0);
+    }
+
 }
