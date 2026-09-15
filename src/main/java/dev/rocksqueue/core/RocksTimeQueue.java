@@ -573,11 +573,13 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
      */
     private int collectAndFillReadyCache(ReadyCache cache, int batchSize) {
         final long now = clock.millis();
-        byte[] ub = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
+        // RocksDB's iterateUpperBound is exclusive: the scan stops before the first key
+        // that sorts at or after this bound.
+        byte[] upperBound = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
 
         int collected = 0;
 
-        try (Slice ubSlice = new Slice(ub);
+        try (Slice ubSlice = new Slice(upperBound);
              ReadOptions ro = new ReadOptions()
                      .setVerifyChecksums(false)
                      .setFillCache(false)
@@ -603,7 +605,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 
                 long ts = BinaryKeyEncoder.decodeTimestamp(k);
                 if (ts > now) {
-                    break; // safety; upper bound applied via iterateUpperBound
+                    break; // mirror the exclusive upper bound; nothing at or past `now` is ready
                 }
 
                 byte[] keyCopy = Arrays.copyOf(k, k.length);
