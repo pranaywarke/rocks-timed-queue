@@ -604,7 +604,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
                 }
 
                 long ts = BinaryKeyEncoder.decodeTimestamp(k);
-                if (ts >= now) {
+                if (ts > now) {
                     break; // mirror the exclusive upper bound; nothing at or past `now` is ready
                 }
 
