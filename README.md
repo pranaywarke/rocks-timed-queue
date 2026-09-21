@@ -185,3 +185,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Issues**: [GitHub Issues](https://github.com/pranaywarke/rocksqueue/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/pranaywarke/rocksqueue/discussions)
 - **Documentation**: Check the [wiki](https://github.com/pranaywarke/rocksqueue/wiki) for detailed guides
+
+## Durability of enqueued items
+
+An enqueue is durable once RocksDB has appended it to the write-ahead log. With the default `WriteOptions` the WAL write is not fsynced on every put, so a machine crash (not just a process crash) can lose the last few writes; set `sync=true` on the write if an enqueue must survive power loss.
