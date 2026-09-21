@@ -20,6 +20,18 @@ public class Utils {
         return name.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
+    /**
+     * The number of items one refill may move from RocksDB into the ready cache.
+     * A caller may ask for any size; the result is at least 1 and never more than
+     * {@code max}, so a misconfigured batch cannot outgrow the cache it fills.
+     */
+    public static int clampBatchSize(int requested, int max) {
+        if (requested <= 0) {
+            return 1;
+        }
+        return Math.min(requested, max);
+    }
+
 
 
 
