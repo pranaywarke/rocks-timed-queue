@@ -29,7 +29,7 @@ public class Utils {
         if (requested <= 0) {
             return 1;
         }
-        return Math.max(requested, max);
+        return Math.min(requested, max);
     }
 
 
