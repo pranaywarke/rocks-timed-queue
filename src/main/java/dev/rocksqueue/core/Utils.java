@@ -32,6 +32,17 @@ public class Utils {
         return Math.min(requested, max);
     }
 
+    /**
+     * How long a refill may wait before giving up, in milliseconds. A caller may ask for
+     * anything; the answer is at least {@code floor} and never more than {@code ceiling}.
+     */
+    public static long clampWaitMillis(long requested, long floor, long ceiling) {
+        if (requested < floor) {
+            return floor;
+        }
+        return Math.min(requested, ceiling);
+    }
+
 
 
 
