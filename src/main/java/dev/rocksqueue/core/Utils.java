@@ -29,7 +29,10 @@ public class Utils {
         if (requested <= 0) {
             return 1;
         }
-        return Math.min(requested, max);
+        if (requested >= max) {
+            return max - 1;
+        }
+        return requested;
     }
 
     /**
@@ -40,7 +43,10 @@ public class Utils {
         if (requested < floor) {
             return floor;
         }
-        return Math.min(requested, ceiling);
+        if (requested > ceiling) {
+            return ceiling;
+        }
+        return requested;
     }
 
 
