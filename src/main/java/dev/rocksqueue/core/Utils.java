@@ -47,6 +47,17 @@ public class Utils {
 
 
     /**
+     * The number of ready-cache entries one dequeue may hand back at once. At least
+     * {@code floor}, never more than {@code ceiling}.
+     */
+    public static int clampDequeueBatch(int requested, int floor, int ceiling) {
+        if (requested < floor) {
+            return floor;
+        }
+        return Math.min(requested, ceiling);
+    }
+
+    /**
      * Recovers the insertion counter value, preferring persisted metadata over data scanning.
      * This optimization tries O(1) metadata read before falling back to O(n) data scan.
      *
