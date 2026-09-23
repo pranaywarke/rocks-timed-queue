@@ -41,6 +41,9 @@ public final class MappedLongCounter implements Counter, AutoCloseable {
             MappedByteBuffer mbb = ch.map(FileChannel.MapMode.READ_WRITE, 0, 8);
             mbb.order(ByteOrder.BIG_ENDIAN);
             long initial = mbb.getLong(0);
+            if (initial < 0) {
+                throw new IllegalStateException("Corrupt counter file at " + path + ": " + initial);
+            }
             return new MappedLongCounter(ch, mbb, initial);
         } catch (IOException e) {
             throw new RuntimeException("Failed to open mapped counter at " + path, e);
