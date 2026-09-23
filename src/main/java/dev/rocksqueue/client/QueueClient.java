@@ -157,14 +157,12 @@ public class QueueClient implements AutoCloseable {
 
     @Override
     public void close() {
-        // Close all active queues
-        activeQueues.values().forEach(queue -> { 
-            try { 
-                ((AutoCloseable) queue).close(); 
-            } catch (Exception ignored) {} 
+        // Close queues in parallel: each RocksDB close flushes and can take seconds.
+        activeQueues.values().parallelStream().forEach(queue -> {
+            try {
+                ((AutoCloseable) queue).close();
+            } catch (Exception ignored) {}
         });
-        
-        // Clear all state
         activeQueues.clear();
         registrations.clear();
     }
