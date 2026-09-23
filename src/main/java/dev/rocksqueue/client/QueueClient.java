@@ -82,7 +82,9 @@ public class QueueClient implements AutoCloseable {
         QueueRegistration<?> existing = registrations.putIfAbsent(group, newRegistration);
         if (existing != null) {
             // Check if registration is compatible
-            if (!existing.type.equals(type) || !existing.serializer.equals(serializer)) {
+            // Serializers rarely implement equals(); comparing them made every re-registration
+            // with a fresh serializer instance fail. The type is what guarantees compatibility.
+            if (!existing.type.equals(type)) {
                 throw new IllegalStateException(
                     String.format("Queue group '%s' already registered with different type/serializer. " +
                                 "Existing: %s, Requested: %s", 
