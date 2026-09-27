@@ -1,9 +1,9 @@
 package dev.rocksqueue.admin;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 
 /** Reads the audit trail for one queue, for the admin console. */
 public final class QueueAudit {
@@ -14,10 +14,12 @@ public final class QueueAudit {
     }
 
     public int countEvents(String queueName) throws SQLException {
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery(
-                     "SELECT COUNT(*) FROM queue_audit WHERE queue = '" + queueName + "'")) {
-            return rows.next() ? rows.getInt(1) : 0;
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT COUNT(*) FROM queue_audit WHERE queue = ?")) {
+            statement.setString(1, queueName);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? rows.getInt(1) : 0;
+            }
         }
     }
 }
