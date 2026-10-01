@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 import static dev.rocksqueue.core.RocksTimeQueue.BINARY_KEY_LENGTH;
 import static dev.rocksqueue.core.RocksTimeQueue.META_INSERTION_COUNTER_KEY;
@@ -16,8 +17,30 @@ public class Utils {
 
     private static final Logger logger = LoggerFactory.getLogger(Utils.class);
 
+    private static final Pattern UNSAFE_CHARACTERS = Pattern.compile("[^a-zA-Z0-9._-]");
+
+    /**
+     * Reduces a queue group name to a single safe path segment.
+     *
+     * <p>Every separator is already replaced, but "." and ".." survive the character filter
+     * and are resolved by the filesystem rather than treated as names, so a group called
+     * ".." would place its directory outside the configured base path. Both are rejected,
+     * as are blank names, because a group directory must be a name and not a traversal.
+     *
+     * @param name the group name to reduce
+     * @return the sanitized single path segment
+     * @throws IllegalArgumentException if the name is blank or resolves to a path traversal
+     */
     public static String sanitize(String name) {
-        return name.replaceAll("[^a-zA-Z0-9._-]", "_");
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Queue group name must not be blank");
+        }
+        String sanitized = UNSAFE_CHARACTERS.matcher(name).replaceAll("_");
+        if (sanitized.equals(".") || sanitized.equals("..")) {
+            throw new IllegalArgumentException(
+                    "Queue group name must not resolve to a path traversal: " + name);
+        }
+        return sanitized;
     }
 
     /**
