@@ -368,7 +368,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             wasCacheHit = (entry != null);
 
             if (!wasCacheHit) {
-                int filled = collectAndFillReadyCache(readyCache, config.getDequeueBatchSize());
+                int filled = collectAndFillReadyCache(readyCache, Math.max(1, config.getDequeueBatchSize()));
                 if (filled == 0) {
                     return null;
                 }
