@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package dev.rocksqueue.cache;
 
 import dev.rocksqueue.core.RawCacheEntry;
