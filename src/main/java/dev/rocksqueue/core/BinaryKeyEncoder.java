@@ -23,18 +23,18 @@ public final class BinaryKeyEncoder {
     }
 
     public static long decodeTimestamp(byte[] key) {
-        if (key == null || key.length != KEY_LENGTH) {
-            throw new IllegalArgumentException("Invalid key length: expected " + KEY_LENGTH);
-        }
-        ByteBuffer buf = ByteBuffer.wrap(key).order(ByteOrder.BIG_ENDIAN);
-        return buf.getLong(0);
+        return checked(key).getLong(0);
     }
 
     public static long decodeSequence(byte[] key) {
+        return checked(key).getLong(0);
+    }
+
+    /** One place for the length check both decoders need. */
+    private static ByteBuffer checked(byte[] key) {
         if (key == null || key.length != KEY_LENGTH) {
             throw new IllegalArgumentException("Invalid key length: expected " + KEY_LENGTH);
         }
-        ByteBuffer buf = ByteBuffer.wrap(key).order(ByteOrder.BIG_ENDIAN);
-        return buf.getLong(8);
+        return ByteBuffer.wrap(key).order(ByteOrder.BIG_ENDIAN);
     }
 }
