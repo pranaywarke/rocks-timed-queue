@@ -304,8 +304,8 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
             }
         }
 
-        if(rollingIteratorStartTimeStamp!=null &&
-                (executeAtMillis <= BinaryKeyEncoder.decodeTimestamp(rollingIteratorStartTimeStamp))){
+        if (rollingIteratorStartTimeStamp != null
+                && executeAtMillis <= BinaryKeyEncoder.decodeTimestamp(rollingIteratorStartTimeStamp)) {
             resetRollingIterator.set(true);
         }
         // Handle clock regression
