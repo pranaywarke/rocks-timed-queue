@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package dev.rocksqueue.core;
 
 import java.io.File;
@@ -68,7 +69,7 @@ public final class MappedLongCounter implements Counter, AutoCloseable {
 
     private void write(long v) {
         // Absolute write avoids races on the shared position/limit of the mapped buffer under concurrency
-        mapped.putLong(0, v);
+        mapped.putLong(v);
         // Do not force() every time to avoid overhead; rely on OS flush and force on close
     }
 

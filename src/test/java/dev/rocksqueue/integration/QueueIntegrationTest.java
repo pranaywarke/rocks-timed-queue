@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package dev.rocksqueue.integration;
 
 import dev.rocksqueue.api.TimeQueue;

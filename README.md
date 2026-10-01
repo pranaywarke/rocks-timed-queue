@@ -185,3 +185,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Issues**: [GitHub Issues](https://github.com/pranaywarke/rocksqueue/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/pranaywarke/rocksqueue/discussions)
 - **Documentation**: Check the [wiki](https://github.com/pranaywarke/rocksqueue/wiki) for detailed guides
+
+Licensed under the MIT License; see [LICENSE](LICENSE).
