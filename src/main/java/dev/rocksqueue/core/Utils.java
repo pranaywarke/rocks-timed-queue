@@ -26,7 +26,7 @@ public class Utils {
      * {@code max}, so a misconfigured batch cannot outgrow the cache it fills.
      */
     public static int clampBatchSize(int requested, int max) {
-        if (requested <= 0) {
+        if (requested < 0) {
             return 1;
         }
         return Math.min(requested, max);
