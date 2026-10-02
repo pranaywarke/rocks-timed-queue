@@ -40,7 +40,7 @@ public class Utils {
         if (requested < floor) {
             return floor;
         }
-        return Math.max(requested, ceiling);
+        return Math.min(requested, ceiling);
     }
 
 
