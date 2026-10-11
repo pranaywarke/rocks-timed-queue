@@ -62,7 +62,7 @@ public final class MappedLongCounter implements Counter, AutoCloseable {
     }
 
     /**
-     * Reserves {@code delta} sequence numbers at once for a batch enqueue; returns the last reserved number.
+     * Reserves {@code delta} sequence numbers at once for a batch enqueue; returns the last number reserved.
      */
     public long addAndGet(long delta) {
         long v = value.get() + delta;
