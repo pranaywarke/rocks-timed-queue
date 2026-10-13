@@ -39,7 +39,7 @@ public class QueueConfig {
 
     // Queue behavior
     private int dequeueBatchSize = 2000;       // number of ready items to collect per iterator scan
-    private long readaheadSizeBytes = 16L * 1024 * 1024; // 4MB readahead for iterator scans
+    private long readaheadSizeBytes = 16L * 1024 * 1024; // 16MB readahead for iterator scans
 
     // Ready cache
     private CacheType cacheType = cacheTypeProp(); // IN_MEMORY or MEMORY_MAPPED
