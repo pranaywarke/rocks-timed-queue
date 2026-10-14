@@ -42,6 +42,8 @@ public class QueueConfig {
     private int refillMaxWaitMillis = intProp("rq.refillMaxWaitMillis", 50); // how long one cache refill may wait
     private long readaheadSizeBytes = 16L * 1024 * 1024; // 4MB readahead for iterator scans
 
+    private long iteratorIdleTimeout = 5_000L; // close an idle refill iterator after this long
+
     // Ready cache
     private CacheType cacheType = cacheTypeProp(); // IN_MEMORY or MEMORY_MAPPED
     private int cacheFileSizeMB = intProp("rq.cacheFileSizeMB", 16); // fixed-size circular file capacity (MB)
