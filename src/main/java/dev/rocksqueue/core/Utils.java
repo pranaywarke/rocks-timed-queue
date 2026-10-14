@@ -21,6 +21,17 @@ public class Utils {
     }
 
     /**
+     * {@link #sanitize(String)} with a fallback for a blank name, so a caller that reads the
+     * group from configuration never ends up with an empty directory name.
+     */
+    public static String sanitizeOrDefault(String name, String fallback) {
+        if (name == null || name.isBlank()) {
+            return sanitize(fallback);
+        }
+        return sanitize(name);
+    }
+
+    /**
      * The number of items one refill may move from RocksDB into the ready cache.
      * A caller may ask for any size; the result is at least 1 and never more than
      * {@code max}, so a misconfigured batch cannot outgrow the cache it fills.
