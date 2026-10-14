@@ -13,7 +13,7 @@ public final class BinaryKeyEncoder {
     public static final int KEY_LENGTH = 16;
 
     public static byte[] encode(long executeAtMillis, long insertionSequence) {
-        if (executeAtMillis < 0 || insertionSequence < 0) {
+        if (executeAtMillis < 0) {
             throw new IllegalArgumentException("executeAtMillis and insertionSequence must be non-negative");
         }
         ByteBuffer buf = ByteBuffer.allocate(KEY_LENGTH).order(ByteOrder.BIG_ENDIAN);
