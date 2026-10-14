@@ -66,7 +66,7 @@ public class QueueClient implements AutoCloseable {
      * @param serializer the serializer for converting items to/from bytes
      * @param <T> the type of items stored in the queue
      * @throws IllegalArgumentException if group is null/empty or type/serializer is null
-     * @throws IllegalStateException if group is already registered with different type/serializer
+     * @throws IllegalStateException if group is already registered with a different type
      */
     public <T> void registerQueue(String group, Class<T> type, Serializer<T> serializer) {
         Objects.requireNonNull(group, "group cannot be null");
@@ -82,9 +82,10 @@ public class QueueClient implements AutoCloseable {
         QueueRegistration<?> existing = registrations.putIfAbsent(group, newRegistration);
         if (existing != null) {
             // Check if registration is compatible
-            if (!existing.type.equals(type) || !existing.serializer.equals(serializer)) {
+            // Only the type must match: a second serializer for the same type is ignored and the first one stays.
+            if (!existing.type.equals(type)) {
                 throw new IllegalStateException(
-                    String.format("Queue group '%s' already registered with different type/serializer. " +
+                    String.format("Queue group '%s' already registered with a different type. " +
                                 "Existing: %s, Requested: %s", 
                                 group, existing.type.getName(), type.getName()));
             }
