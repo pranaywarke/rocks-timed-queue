@@ -39,7 +39,7 @@ public class QueueConfig {
 
     // Queue behavior
     private int dequeueBatchSize = 2000;       // number of ready items to collect per iterator scan
-    private int refillMaxWaitMillis = intProp("rq.refillMaxWaitMillis", 50); // how long one cache refill may wait
+    private int refillMaxWaitSeconds = intProp("rq.refillMaxWaitSeconds", 1); // how long one cache refill may wait, in seconds
     private long readaheadSizeBytes = 16L * 1024 * 1024; // 4MB readahead for iterator scans
 
     // Ready cache
