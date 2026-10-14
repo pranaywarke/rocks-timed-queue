@@ -447,6 +447,43 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
 
 
     /**
+     * Counts items that are ready for dequeue right now, scanning at most {@code limit}
+     * keys so the call stays bounded on a large backlog. Intended for monitoring and
+     * alerting; the result is a snapshot and may be stale by the time it returns.
+     *
+     * @param limit maximum number of ready keys to count before returning early
+     * @return the number of ready items seen (capped at {@code limit}), or -1 if closed
+     */
+    public long readyCountApproximate(int limit) {
+        if (closed.get()) {
+            return -1;
+        }
+        long now = clock.millis();
+        byte[] ub = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
+        Slice ubSlice = new Slice(ub);
+        ReadOptions ro = new ReadOptions()
+                .setVerifyChecksums(false)
+                .setFillCache(false)
+                .setIterateUpperBound(ubSlice);
+        RocksIterator it = db.newIterator(ro);
+        long count;
+        synchronized (dequeueLock) {
+            count = readyCache.size();
+        }
+        it.seekToFirst();
+        while (it.isValid()) {
+            if (++count >= limit) {
+                return count;
+            }
+            it.next();
+        }
+        it.close();
+        ro.close();
+        ubSlice.close();
+        return count;
+    }
+
+    /**
      * Closes this queue and releases all associated resources.
      *
      * <p>This method performs the following cleanup operations:
