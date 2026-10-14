@@ -17,7 +17,8 @@ public class Utils {
     private static final Logger logger = LoggerFactory.getLogger(Utils.class);
 
     public static String sanitize(String name) {
-        return name.replaceAll("[^a-zA-Z0-9._-]", "_");
+        // Allow nested group names ("billing/invoices") to become nested directories.
+        return name.replaceAll("[^a-zA-Z0-9._/-]", "_");
     }
 
     /**
