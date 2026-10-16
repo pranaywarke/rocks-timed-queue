@@ -148,6 +148,7 @@ public class QueueClient implements AutoCloseable {
 
     /**
      * Returns whether a queue group has an open queue, without opening one.
+     * Safe to call from monitoring threads.
      *
      * @param group the queue group name
      * @return true if the group has an active queue that is not closed
