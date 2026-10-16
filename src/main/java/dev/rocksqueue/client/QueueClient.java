@@ -147,6 +147,17 @@ public class QueueClient implements AutoCloseable {
     }
 
     /**
+     * Returns whether a queue group has an open queue, without opening one.
+     *
+     * @param group the queue group name
+     * @return true if the group has an active queue that is not closed
+     */
+    public boolean isOpen(String group) {
+        TimeQueue<?> queue = activeQueues.get(group);
+        return !((RocksTimeQueue<?>) queue).isClosed();
+    }
+
+    /**
      * Returns the number of registered queue groups.
      * 
      * @return number of registered groups

@@ -64,6 +64,15 @@ class QueueClientTest {
     }
 
     @Test
+    void isOpen_trueAfterGetQueue() throws Exception {
+        tmp = Files.createTempDirectory("rocksqueue-client-");
+        client = new QueueClient(new QueueConfig().setBasePath(tmp.toString()));
+        client.registerQueue("g1", String.class, new JsonSerializer<>());
+        client.getQueue("g1");
+        assertTrue(client.isOpen("g1"));
+    }
+
+    @Test
     void sanitizeGroupNames_createsDirectories_andQueueWorks() throws Exception {
         tmp = Files.createTempDirectory("rocksqueue-client-");
         QueueConfig cfg = new QueueConfig().setBasePath(tmp.toString());
