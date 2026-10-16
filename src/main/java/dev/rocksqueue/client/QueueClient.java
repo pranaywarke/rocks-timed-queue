@@ -148,7 +148,7 @@ public class QueueClient implements AutoCloseable {
 
     /**
      * Returns how many more groups fit under a limit.
-     * Reads the registrations without a lock.
+     * Reads the registrations without a lock, so the count may be stale.
      *
      * @param maxGroups the most groups this client may hold
      * @return the groups still free under maxGroups, never negative
