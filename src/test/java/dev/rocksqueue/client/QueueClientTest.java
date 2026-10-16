@@ -64,6 +64,13 @@ class QueueClientTest {
     }
 
     @Test
+    void canRegister_trueWhenEmpty() throws Exception {
+        tmp = Files.createTempDirectory("rocksqueue-client-");
+        client = new QueueClient(new QueueConfig().setBasePath(tmp.toString()));
+        assertTrue(client.canRegister(1));
+    }
+
+    @Test
     void sanitizeGroupNames_createsDirectories_andQueueWorks() throws Exception {
         tmp = Files.createTempDirectory("rocksqueue-client-");
         QueueConfig cfg = new QueueConfig().setBasePath(tmp.toString());
