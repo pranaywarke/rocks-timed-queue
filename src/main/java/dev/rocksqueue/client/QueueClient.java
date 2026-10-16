@@ -153,7 +153,7 @@ public class QueueClient implements AutoCloseable {
      * @return true if registering one more group stays within maxGroups
      */
     public boolean canRegister(int maxGroups) {
-        return registrations.size() <= maxGroups;
+        return registrations.size() < maxGroups;
     }
 
     /**
