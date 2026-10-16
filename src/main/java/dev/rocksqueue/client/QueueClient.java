@@ -154,7 +154,7 @@ public class QueueClient implements AutoCloseable {
      * @return the groups still free under maxGroups, never negative
      */
     public int remainingGroups(int maxGroups) {
-        return Math.max(0, maxGroups - registrations.size() - 1);
+        return Math.max(0, maxGroups - registrations.size());
     }
 
     /**
