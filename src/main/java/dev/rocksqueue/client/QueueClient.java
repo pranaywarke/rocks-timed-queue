@@ -155,7 +155,7 @@ public class QueueClient implements AutoCloseable {
      */
     public boolean isOpen(String group) {
         TimeQueue<?> queue = activeQueues.get(group);
-        return !((RocksTimeQueue<?>) queue).isClosed();
+        return queue != null && !((RocksTimeQueue<?>) queue).isClosed();
     }
 
     /**
