@@ -147,6 +147,16 @@ public class QueueClient implements AutoCloseable {
     }
 
     /**
+     * Returns how many more groups fit under a limit.
+     *
+     * @param maxGroups the most groups this client may hold
+     * @return the groups still free under maxGroups, never negative
+     */
+    public int remainingGroups(int maxGroups) {
+        return Math.max(0, maxGroups - registrations.size() - 1);
+    }
+
+    /**
      * Returns the number of registered queue groups.
      * 
      * @return number of registered groups
