@@ -68,6 +68,8 @@ class QueueClientTest {
         tmp = Files.createTempDirectory("rocksqueue-client-");
         client = new QueueClient(new QueueConfig().setBasePath(tmp.toString()));
         assertTrue(client.canRegister(1));
+        client.registerQueue("g1", String.class, new JsonSerializer<>());
+        assertFalse(client.canRegister(1));
     }
 
     @Test
