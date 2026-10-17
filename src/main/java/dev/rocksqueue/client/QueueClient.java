@@ -155,6 +155,10 @@ public class QueueClient implements AutoCloseable {
         return registrations.size();
     }
 
+    public int getActiveQueueCount() {
+        return activeQueues.size();
+    }
+
     @Override
     public void close() {
         // Close all active queues
