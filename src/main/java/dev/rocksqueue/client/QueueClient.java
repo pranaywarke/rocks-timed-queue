@@ -143,7 +143,17 @@ public class QueueClient implements AutoCloseable {
      * @return true if registered, false otherwise
      */
     public boolean isRegistered(String group) {
-        return registrations.containsKey(group);
+        return group != null && registrations.containsKey(group);
+    }
+
+    /**
+     * The registered group names, in no particular order. A snapshot: later registrations
+     * do not appear in a set already returned.
+     *
+     * @return an unmodifiable copy of the registered group names
+     */
+    public java.util.Set<String> registeredGroups() {
+        return java.util.Set.copyOf(registrations.keySet());
     }
 
     /**
