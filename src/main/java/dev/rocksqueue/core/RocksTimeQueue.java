@@ -41,7 +41,7 @@ import static dev.rocksqueue.core.Utils.sanitize;
  * ensuring proper ordering and uniqueness.
  *
  * <p><strong>Thread Safety:</strong> This class is thread-safe for concurrent enqueue/dequeue
- * operations. Dequeue operations are synchronized to maintain consistency.
+ * operations. Cache refills are synchronized; cache polls take the lock-free fast path.
  *
  * <p><strong>Resource Management:</strong> This class implements {@link AutoCloseable} and
  * should be properly closed to release RocksDB resources and persist any cached data.
@@ -362,12 +362,14 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         RawCacheEntry entry;
         boolean wasCacheHit;
 
-        // Minimal critical section: poll from cache; if empty, refill and poll once
-        synchronized (dequeueLock) {
-            entry = isPeek ? readyCache.peekFirst() : readyCache.pollFirst();
-            wasCacheHit = (entry != null);
+        // Fast path: the ready cache is consumed from the head and only ever appended to by
+        // a refill, so a poll can proceed without contending with an in-flight refill. Only
+        // the refill itself (RocksDB scan + delete) still needs the lock.
+        entry = isPeek ? readyCache.peekFirst() : readyCache.pollFirst();
+        wasCacheHit = (entry != null);
 
-            if (!wasCacheHit) {
+        if (!wasCacheHit) {
+            synchronized (dequeueLock) {
                 int filled = collectAndFillReadyCache(readyCache, Math.max(1, config.getDequeueBatchSize()));
                 if (filled == 0) {
                     return null;
