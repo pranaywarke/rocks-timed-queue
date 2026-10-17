@@ -565,6 +565,15 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
     }
 
     /**
+     * The exclusive scan bound for entries that are ready at {@code now}: every key with
+     * timestamp {@code now} sorts strictly before {@code (now, Long.MAX_VALUE)}, so the
+     * whole millisecond is included and nothing later is.
+     */
+    static byte[] readyUpperBound(long now) {
+        return BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
+    }
+
+    /**
      * Collects raw ready entries without deserialization to minimize synchronized block time.
      * This method performs the database operations and raw data collection efficiently.
      *
@@ -573,11 +582,11 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
      */
     private int collectAndFillReadyCache(ReadyCache cache, int batchSize) {
         final long now = clock.millis();
-        byte[] ub = BinaryKeyEncoder.encode(now, Long.MAX_VALUE);
+        byte[] upperBound = readyUpperBound(now);
 
         int collected = 0;
 
-        try (Slice ubSlice = new Slice(ub);
+        try (Slice ubSlice = new Slice(upperBound);
              ReadOptions ro = new ReadOptions()
                      .setVerifyChecksums(false)
                      .setFillCache(false)
