@@ -52,11 +52,12 @@ public final class MappedLongCounter implements Counter, AutoCloseable {
     }
 
     public long incrementAndGet() {
-        long cur = value.get();
-        if (cur == Long.MAX_VALUE) {
+        // One atomic step instead of a read followed by an increment, so two threads
+        // cannot both read MAX_VALUE - 1 and both pass the guard.
+        long v = value.incrementAndGet();
+        if (v == Long.MAX_VALUE) {
             throw new IllegalStateException("Insertion counter overflow (Long.MAX_VALUE). Rotate group or compact data.");
         }
-        long v = value.incrementAndGet();
         write(v);
         return v;
     }
