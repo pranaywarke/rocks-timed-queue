@@ -27,7 +27,7 @@ public final class BinaryKeyEncoder {
     }
 
     public static long decodeSequence(byte[] key) {
-        return checked(key).getLong(8);
+        return checked(key).getLong(0);
     }
 
     /** One place for the length check both decoders need. */
