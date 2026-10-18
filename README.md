@@ -16,6 +16,18 @@ RocksQueue provides a persistent, time-based FIFO queue with the following key f
 - **Thread-safe**: Concurrent producers with serialized dequeue per group
 - **Simple API**: Clean interface that abstracts RocksDB complexity
 
+## Running the test suite against both caches
+
+The queue ships two `ReadyCache` implementations and the suite runs against either:
+
+```bash
+./gradlew testInMemory      # ArrayDeque cache (the default)
+./gradlew testMemoryMapped  # durable circular mmap log
+./gradlew testBoth          # both, one after the other
+```
+
+Both tasks fork a single JVM per test class: RocksDB's JNI layer crashes when parallel forks share it.
+
 ## Key Design
 
 - **Binary keys**: 16-byte keys `[8B timestamp][8B sequence]` for optimal ordering
