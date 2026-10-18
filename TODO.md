@@ -61,3 +61,5 @@ This document tracks planned improvements and known areas for enhancement in Roc
 ---
 
 **Contributing**: If you're interested in working on any of these items, please check the [Contributing Guidelines](CONTRIBUTING.md) and open an issue to discuss your approach.
+
+Licensed under the MIT License; see [LICENSE](LICENSE).

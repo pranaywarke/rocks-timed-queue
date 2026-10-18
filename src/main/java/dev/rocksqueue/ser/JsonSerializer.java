@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package dev.rocksqueue.ser;
 
 import com.fasterxml.jackson.core.JsonProcessingException;

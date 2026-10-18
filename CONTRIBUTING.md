@@ -255,3 +255,5 @@ For urgent issues or security concerns, contact the maintainers directly through
 ---
 
 Thank you for contributing to RocksQueue! Your contributions help make this project better for everyone.
+
+Licensed under the MIT License; see [LICENSE](LICENSE).

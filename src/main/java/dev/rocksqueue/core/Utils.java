@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package dev.rocksqueue.core;
 
 import org.rocksdb.RocksDB;

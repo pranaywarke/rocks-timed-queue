@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package dev.rocksqueue.recovery;
 
 import dev.rocksqueue.config.QueueConfig;
