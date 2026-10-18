@@ -185,3 +185,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Issues**: [GitHub Issues](https://github.com/pranaywarke/rocksqueue/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/pranaywarke/rocksqueue/discussions)
 - **Documentation**: Check the [wiki](https://github.com/pranaywarke/rocksqueue/wiki) for detailed guides
+
+## Iterators and native memory
+
+Every `RocksIterator` holds native memory and pins the SST files and memtables it reads from, so it must be closed (the queue uses try-with-resources everywhere). RocksDB does not free an iterator when the Java object is garbage collected promptly enough to rely on.
