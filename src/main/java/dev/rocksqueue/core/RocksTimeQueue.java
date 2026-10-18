@@ -296,7 +296,7 @@ public class RocksTimeQueue<T> implements TimeQueue<T>, AutoCloseable {
         long originalExecuteAt = executeAtMillis;
 
         // Adjust past timestamps to current time
-        if (executeAtMillis < now) {
+        if (executeAtMillis > now) {
             executeAtMillis = now;
             if (logger.isDebugEnabled()) {
                 logger.debug("Adjusted past execution time from {} to {} for item in group '{}'",
