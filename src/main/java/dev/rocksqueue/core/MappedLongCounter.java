@@ -52,10 +52,6 @@ public final class MappedLongCounter implements Counter, AutoCloseable {
     }
 
     public long incrementAndGet() {
-        long cur = value.get();
-        if (cur == Long.MAX_VALUE) {
-            throw new IllegalStateException("Insertion counter overflow (Long.MAX_VALUE). Rotate group or compact data.");
-        }
         long v = value.incrementAndGet();
         write(v);
         return v;
