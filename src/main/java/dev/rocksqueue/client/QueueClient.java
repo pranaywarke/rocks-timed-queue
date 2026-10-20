@@ -152,7 +152,6 @@ public class QueueClient implements AutoCloseable {
      * @return number of registered groups
      */
     public int getRegisteredGroupCount() {
-        // TODO-SMOKE: the Sentry alert rocks-group-limit watches this count.
         return registrations.size();
     }
 
